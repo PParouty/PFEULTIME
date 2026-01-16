@@ -1,0 +1,58 @@
+
+
+Bonjour Claude
+
+
+Je vais te detailler les instructions du projet.
+
+Nous travaillons pour l'entreprise SIREN qui utilise des graph d'investigation.
+Nous voulons réaliser un systeme multi agent orechestré par un LLM (clef OPEN IA) - La clef ne sera pas communiqué, il faudra indiquer ou la placer.
+Le principe du projet est simple :
+- Nous avons plusieurs agent qui sont specialisé dans une tache bien précise 
+- Le LLM est a la fois orechestrateur (il orechestre les interactions entre les agents) et est a la fois le lien entre l'utilisateur et la réponse
+
+Dans les documents que je te fourni tu as :
+
+- Une photo expliquant le principe de ce que nous allons essayer de mettre en place 
+-> un orchestrateur
+-> il y a des agents et des outils que ces agents utilisent
+-> les agents sont : 1 plannificateur qui redige un plan d'action sur les differentes étapes a suivre et les different outils a utilisé, 1 agent de priorisation des prochains noeud à explorer, 1 agent pour effectuer un résumé lisible des résultats pour l'humain utilisateur 
+-> les outils sont : 	des outils de foraging qui seront employés, (IF -> F est pour Foraging, le I nous ne savons pas..) le principe est de réaliser des outils deterministe pour recuperer les voisins d'un noeud en train d'être exploré (des choses comme lookup etc) Ces outils sont deterministes, c'est a dire qu'ils servent uniquement leur fonction est cest tout.
+
+- Ce fichier .txt qui résume le projet
+
+- un dossier vide, qui sera le dossier dans lequel tu travailleras
+
+
+
+POUR T'AIDER : 
+
+Je pense qu'il est tres pertinent d'utiliser des librairies speciales comme par exemple :
+- https://www.langchain.com/langgraph -> plus recente, plus moderne
+- https://www.llamaindex.ai/
+
+Voici le chemin relatif de l'ancienne version du projet : 
+/home/pierre/Documents/PFESOMBRE   
+exemple de requete anciennement :
+{
+  "task":"find_paths_between_entities",
+  "params":{
+    "entity_a":"10gen","type_a":"company",
+    "entity_b":"Union Square Ventures","type_b":"investor",
+    "year_min":2000,"year_max":2020,"currency_code":"USD","max_paths":5
+  }
+}
+-> on souhaiterait eviter cela et pouvoir simplement faire des requetes textuelle au LLM (comme lorsque je te parle)
+
+ATTENTION : l'ancienne version du projet est obsolete et a beaucoup trop d'élément, je te la fournie uniquement comme context, mais nous ne voulons absolument pas l meme resultat : il ya trop d'agent trop de code et rien de fonctionnelle.  Il me faut un fresh start pour pouvoir bien maitriser ce qu'il se passe
+
+
+
+Dis moi si tu as des questions et si tu as bien tout compris stp 
+
+
+
+EDIT :
+
+Le chemin de la version SIREN Investigate en local : /home/pierre/Téléchargements/siren-platform-demo-data-15.0.0-linux-x86_64
+
