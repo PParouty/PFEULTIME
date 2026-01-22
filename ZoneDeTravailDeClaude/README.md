@@ -48,7 +48,7 @@ Créez un fichier `.env` à partir de `.env.example`:
 
 ```env
 # Obligatoire
-OPENAI_API_KEY=sk-votre-cle-api
+OPENAI_API_KEY=LA CLEF
 
 # Optionnel (avec valeurs par défaut)
 OPENAI_MODEL=gpt-4o-mini
