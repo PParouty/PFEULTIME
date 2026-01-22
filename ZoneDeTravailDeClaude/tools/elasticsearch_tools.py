@@ -4,23 +4,35 @@ Ces outils n'utilisent pas de LLM, ils exécutent des requêtes Elasticsearch pr
 """
 
 import os
+import warnings
+import requests
 from typing import Any, Optional
-from elasticsearch import Elasticsearch
 from langchain_core.tools import tool
+
+# Désactiver les warnings SSL pour le développement
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+warnings.filterwarnings("ignore", message=".*Unverified HTTPS request.*")
 
 
 class ElasticsearchTools:
     """Gestionnaire de connexion Elasticsearch et outils de foraging."""
 
     def __init__(self):
-        self.es = Elasticsearch(
-            os.getenv("ES_URL", "https://localhost:9220"),
-            basic_auth=(
-                os.getenv("ES_USER", "sirenadmin"),
-                os.getenv("ES_PASSWORD", "password")
-            ),
-            verify_certs=os.getenv("ES_VERIFY_SSL", "false").lower() == "true"
+        self.base_url = os.getenv("ES_URL", "https://localhost:9220")
+        self.auth = (
+            os.getenv("ES_USER", "sirenadmin"),
+            os.getenv("ES_PASSWORD", "password")
         )
+        self.verify_ssl = os.getenv("ES_VERIFY_SSL", "false").lower() == "true"
+
+    def _search(self, index: str, query: dict, size: int = 10) -> dict:
+        """Exécute une recherche Elasticsearch."""
+        url = f"{self.base_url}/{index}/_search"
+        query["size"] = size
+        response = requests.post(url, json=query, auth=self.auth, verify=self.verify_ssl)
+        response.raise_for_status()
+        return response.json()
 
     def lookup_entity(self, index: str, label: str, size: int = 10) -> dict[str, Any]:
         """
@@ -42,11 +54,10 @@ class ElasticsearchTools:
                         {"wildcard": {"label": {"value": f"*{label.lower()}*"}}}
                     ]
                 }
-            },
-            "size": size
+            }
         }
 
-        res = self.es.search(index=index, body=query)
+        res = self._search(index, query, size)
         hits = res.get("hits", {}).get("hits", [])
         total = res.get("hits", {}).get("total", {}).get("value", 0)
 
@@ -66,14 +77,9 @@ class ElasticsearchTools:
         Returns:
             L'entité ou None si non trouvée
         """
-        query = {
-            "query": {"term": {"id": entity_id}},
-            "size": 1
-        }
-
-        res = self.es.search(index=index, body=query)
+        query = {"query": {"term": {"id": entity_id}}}
+        res = self._search(index, query, 1)
         hits = res.get("hits", {}).get("hits", [])
-
         return hits[0]["_source"] if hits else None
 
     def get_neighbors(self, entity_type: str, entity_id: str) -> dict[str, Any]:
@@ -95,38 +101,40 @@ class ElasticsearchTools:
 
         if entity_type == "company":
             # Trouver les investments liés à cette company
-            inv_query = {"query": {"terms": {"companies": [entity_id]}}, "size": 100}
-            inv_res = self.es.search(index="investment", body=inv_query)
+            inv_query = {"query": {"terms": {"companies": [entity_id]}}}
+            inv_res = self._search("investment", inv_query, 100)
             investments = [hit["_source"] for hit in inv_res.get("hits", {}).get("hits", [])]
             neighbors["investments"] = investments
 
             # Extraire les investors de ces investments
             investor_ids = set()
             for inv in investments:
-                investor_ids.update(inv.get("investors", []))
+                inv_list = inv.get("investors") or []
+                investor_ids.update(inv_list)
 
             if investor_ids:
-                inv_query = {"query": {"terms": {"id": list(investor_ids)}}, "size": 100}
-                inv_res = self.es.search(index="investor", body=inv_query)
+                inv_query = {"query": {"terms": {"id": list(investor_ids)}}}
+                inv_res = self._search("investor", inv_query, 100)
                 neighbors["investors"] = [hit["_source"] for hit in inv_res.get("hits", {}).get("hits", [])]
             else:
                 neighbors["investors"] = []
 
         elif entity_type == "investor":
             # Trouver les investments de cet investor
-            inv_query = {"query": {"terms": {"investors": [entity_id]}}, "size": 100}
-            inv_res = self.es.search(index="investment", body=inv_query)
+            inv_query = {"query": {"terms": {"investors": [entity_id]}}}
+            inv_res = self._search("investment", inv_query, 100)
             investments = [hit["_source"] for hit in inv_res.get("hits", {}).get("hits", [])]
             neighbors["investments"] = investments
 
             # Extraire les companies de ces investments
             company_ids = set()
             for inv in investments:
-                company_ids.update(inv.get("companies", []))
+                comp_list = inv.get("companies") or []
+                company_ids.update(comp_list)
 
             if company_ids:
-                comp_query = {"query": {"terms": {"id": list(company_ids)}}, "size": 100}
-                comp_res = self.es.search(index="company", body=comp_query)
+                comp_query = {"query": {"terms": {"id": list(company_ids)}}}
+                comp_res = self._search("company", comp_query, 100)
                 neighbors["companies"] = [hit["_source"] for hit in comp_res.get("hits", {}).get("hits", [])]
             else:
                 neighbors["companies"] = []
@@ -136,19 +144,19 @@ class ElasticsearchTools:
             entity = self.get_entity_by_id("investment", entity_id)
             if entity:
                 # Récupérer les companies
-                company_ids = entity.get("companies", [])
+                company_ids = entity.get("companies") or []
                 if company_ids:
-                    comp_query = {"query": {"terms": {"id": company_ids}}, "size": 100}
-                    comp_res = self.es.search(index="company", body=comp_query)
+                    comp_query = {"query": {"terms": {"id": company_ids}}}
+                    comp_res = self._search("company", comp_query, 100)
                     neighbors["companies"] = [hit["_source"] for hit in comp_res.get("hits", {}).get("hits", [])]
                 else:
                     neighbors["companies"] = []
 
                 # Récupérer les investors
-                investor_ids = entity.get("investors", [])
+                investor_ids = entity.get("investors") or []
                 if investor_ids:
-                    inv_query = {"query": {"terms": {"id": investor_ids}}, "size": 100}
-                    inv_res = self.es.search(index="investor", body=inv_query)
+                    inv_query = {"query": {"terms": {"id": investor_ids}}}
+                    inv_res = self._search("investor", inv_query, 100)
                     neighbors["investors"] = [hit["_source"] for hit in inv_res.get("hits", {}).get("hits", [])]
                 else:
                     neighbors["investors"] = []
@@ -181,8 +189,8 @@ class ElasticsearchTools:
             return []
 
         # Récupérer les détails
-        query = {"query": {"terms": {"id": list(common_ids)}}, "size": 100}
-        res = self.es.search(index="investor", body=query)
+        query = {"query": {"terms": {"id": list(common_ids)}}}
+        res = self._search("investor", query, 100)
 
         return [hit["_source"] for hit in res.get("hits", {}).get("hits", [])]
 
@@ -224,11 +232,10 @@ class ElasticsearchTools:
             filters.append({"range": {"raised_amount": {"gte": min_amount}}})
 
         query = {
-            "query": {"bool": {"filter": filters}} if filters else {"match_all": {}},
-            "size": size
+            "query": {"bool": {"filter": filters}} if filters else {"match_all": {}}
         }
 
-        res = self.es.search(index="investment", body=query)
+        res = self._search("investment", query, size)
         return [hit["_source"] for hit in res.get("hits", {}).get("hits", [])]
 
 
@@ -264,13 +271,20 @@ def get_neighbors(entity_type: str, entity_id: str) -> dict:
     """
     Récupère tous les voisins d'un noeud dans le graphe d'investigation.
 
-    Pour une company: retourne ses investments et investors liés
-    Pour un investor: retourne ses investments et companies investies
-    Pour un investment: retourne ses companies et investors associés
+    IMPORTANT: entity_type est le TYPE DE L'ENTITÉ SOURCE, pas le type des voisins recherchés !
+
+    Exemples d'utilisation:
+    - Pour trouver les investisseurs d'une COMPANY: get_neighbors("company", "company/airbnb")
+    - Pour trouver les companies d'un INVESTOR: get_neighbors("investor", "person/investor/jeff-bezos")
+
+    Ce que retourne chaque type:
+    - entity_type="company" → retourne {investments: [...], investors: [...]}
+    - entity_type="investor" → retourne {investments: [...], companies: [...]}
+    - entity_type="investment" → retourne {companies: [...], investors: [...]}
 
     Args:
-        entity_type: Type de l'entité - 'company', 'investor', ou 'investment'
-        entity_id: L'identifiant unique de l'entité
+        entity_type: Type de l'entité SOURCE - 'company', 'investor', ou 'investment'
+        entity_id: L'identifiant unique de l'entité (ex: 'company/airbnb')
 
     Returns:
         Dictionnaire avec les voisins groupés par type

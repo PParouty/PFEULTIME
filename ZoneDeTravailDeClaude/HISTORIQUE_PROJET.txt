@@ -1,0 +1,152 @@
+================================================================================
+           HISTORIQUE DU PROJET - SIREN Investigation Agent
+                     Session du 21 Janvier 2026
+================================================================================
+
+1. CONTEXTE INITIAL
+-------------------
+- Entreprise : SIREN (graphes d'investigation)
+- Objectif : Créer un système multi-agents orchestré par LLM (OpenAI)
+- Ancien projet : Trop complexe (9 agents, code non fonctionnel)
+- Nouveau besoin : Fresh start avec 3 agents seulement
+
+2. ARCHITECTURE CONÇUE
+----------------------
+Nous avons conçu une architecture simplifiée :
+
+    Utilisateur (langage naturel)
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │     ORCHESTRATEUR (LangGraph)       │
+    │                                     │
+    │  ┌───────────┐ ┌───────────┐ ┌────────────┐
+    │  │Planificateur│ │Priorisation│ │  Résumé   │
+    │  └───────────┘ └───────────┘ └────────────┘
+    │                                     │
+    │  ┌─────────────────────────────────┐│
+    │  │   Outils IF (Déterministes)    ││
+    │  │  lookup, get_neighbors, etc.   ││
+    │  └─────────────────────────────────┘│
+    └─────────────────────────────────────┘
+           │
+           ▼
+      Elasticsearch (SIREN Investigate)
+
+3. FICHIERS CRÉÉS
+-----------------
+/ZoneDeTravailDeClaude/
+├── main.py                 → Point d'entrée CLI
+├── requirements.txt        → Dépendances Python
+├── .env                    → Configuration (clé OpenAI, Elasticsearch)
+├── agents/
+│   ├── planner.py         → Agent Planificateur
+│   ├── prioritizer.py     → Agent Priorisation
+│   └── summarizer.py      → Agent Résumé
+├── tools/
+│   └── elasticsearch_tools.py → Outils IF (foraging)
+└── core/
+    └── orchestrator.py    → Orchestrateur LangGraph
+
+4. PROBLÈME RENCONTRÉ : BIBLIOTHÈQUE ELASTICSEARCH
+--------------------------------------------------
+ERREUR INITIALE :
+    elasticsearch.ApiError: ApiError(500, 'security_exception', 'Not an SSL request')
+
+DIAGNOSTIC :
+- La bibliothèque Python `elasticsearch` v9.x avait un problème de connexion SSL
+- Malgré les paramètres verify_certs=False et ssl_show_warn=False,
+  la bibliothèque envoyait des requêtes HTTP au lieu de HTTPS
+- Le serveur SIREN Elasticsearch attendait du HTTPS et rejetait les requêtes
+
+TEST DE VÉRIFICATION :
+- curl -k (avec HTTPS) fonctionnait parfaitement
+- La bibliothèque `requests` fonctionnait aussi
+- Seule la bibliothèque `elasticsearch` posait problème
+
+SOLUTION APPLIQUÉE :
+- Remplacement de la bibliothèque `elasticsearch` par `requests` directement
+- Création d'une méthode _search() qui utilise requests.post() avec verify=False
+- Résultat : Connexion fonctionnelle !
+
+CODE AVANT (ne fonctionnait pas) :
+    from elasticsearch import Elasticsearch
+    es = Elasticsearch("https://localhost:9220", verify_certs=False)
+    es.search(...)  # ERREUR SSL
+
+CODE APRÈS (fonctionne) :
+    import requests
+    response = requests.post(url, json=query, auth=auth, verify=False)
+    response.json()  # OK !
+
+5. AUTRE BUG CORRIGÉ : NoneType dans get_neighbors
+--------------------------------------------------
+ERREUR :
+    TypeError: 'NoneType' object is not iterable
+
+CAUSE :
+- Certains documents "investment" n'avaient pas de champ "investors"
+- Le code faisait : inv.get("investors", []) mais retournait None au lieu de []
+
+SOLUTION :
+- Changé en : inv.get("investors") or []
+- Cela gère le cas où le champ est None ou absent
+
+6. TESTS RÉUSSIS
+----------------
+Requête 1 : "Quels sont les investisseurs de MongoDB?"
+→ Résultat : MongoDB n'a pas d'investisseurs dans cette base demo
+
+Requête 2 : "Trouve les investisseurs d'Airbnb"
+→ Résultat : Keith Rabois, Y Combinator
+
+Requête 3 : "Trouve un lien entre Twitter et Airbnb"
+→ Résultat : 6 investisseurs communs trouvés !
+   - Ron Conway
+   - Tim Ferriss
+   - Kleiner Perkins Caufield & Byers
+   - T. Rowe Price
+   - DFJ Growth
+   - Union Square Ventures
+
+7. SERVICES EN ARRIÈRE-PLAN
+---------------------------
+Elasticsearch et Siren Investigate ont été lancés en arrière-plan.
+
+Pour les arrêter :
+    pkill -f elasticsearch
+    pkill -f investigate
+
+Pour les relancer :
+    cd /home/pierre/Téléchargements/siren-platform-demo-data-15.0.0-linux-x86_64/elasticsearch
+    ./bin/elasticsearch &
+
+    cd /home/pierre/Téléchargements/siren-platform-demo-data-15.0.0-linux-x86_64/siren-investigate
+    ./bin/investigate &
+
+8. LIMITATION DÉCOUVERTE : DÉPASSEMENT DE CONTEXTE
+---------------------------------------------------
+ERREUR :
+    openai.BadRequestError: context_length_exceeded (128068 tokens > 128000 max)
+
+CAUSE :
+- Requêtes complexes avec filtres temporels peuvent causer des boucles
+- Le système a fait 53 itérations avant de dépasser la limite
+- Chaque itération accumule des résultats dans les messages
+
+EXEMPLE QUI ÉCHOUE :
+    "Quels investisseurs ont investi dans Twitter entre 2008 et 2012?"
+
+EXEMPLES QUI FONCTIONNENT :
+    "Trouve les investisseurs d'Airbnb"
+    "Trouve un lien entre Twitter et Airbnb"
+
+AMÉLIORATIONS POSSIBLES (pour plus tard) :
+- Augmenter MAX_ITERATIONS dans orchestrator.py (actuellement 10, mais non respecté)
+- Tronquer les messages anciens pour rester sous la limite
+- Utiliser un modèle avec plus de contexte (gpt-4-turbo = 128k, gpt-4o = 128k)
+- Ajouter une logique de résumé intermédiaire des résultats
+
+================================================================================
+                              FIN DE L'HISTORIQUE
+================================================================================
