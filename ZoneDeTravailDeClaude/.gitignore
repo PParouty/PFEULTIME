@@ -1,7 +1,22 @@
+# Environnement virtuel
 .venv/
+venv/
+env/
+
+# Configuration locale (contient la clé API)
 .env
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 
-.venv
+# Logs
+*.log
 
-
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

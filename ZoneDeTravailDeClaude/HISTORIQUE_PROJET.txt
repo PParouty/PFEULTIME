@@ -142,10 +142,33 @@ EXEMPLES QUI FONCTIONNENT :
     "Trouve un lien entre Twitter et Airbnb"
 
 AMÉLIORATIONS POSSIBLES (pour plus tard) :
-- Augmenter MAX_ITERATIONS dans orchestrator.py (actuellement 10, mais non respecté)
-- Tronquer les messages anciens pour rester sous la limite
-- Utiliser un modèle avec plus de contexte (gpt-4-turbo = 128k, gpt-4o = 128k)
-- Ajouter une logique de résumé intermédiaire des résultats
+- Tronquer les messages anciens pour rester sous la limite (Option 2)
+- Ajouter une logique de compression/résumé intermédiaire (Option 3)
+
+9. SOLUTION IMPLÉMENTÉE : GESTION DE L'ERREUR (Option 1)
+--------------------------------------------------------
+Date : 22 Janvier 2026
+
+MODIFICATIONS DANS orchestrator.py :
+1. Import de `openai` pour capturer BadRequestError
+2. Try/catch dans _executor_node() pour détecter "context_length_exceeded"
+3. Si détecté : création d'un message EXPLORATION_COMPLETE + flag context_exceeded
+4. Le summarizer ajoute un avertissement "⚠️ Résultats partiels" si nécessaire
+5. Ajout du champ `context_exceeded: bool` dans GraphState
+
+RÉSULTAT DU TEST :
+- Requête : "Quels investisseurs ont investi dans Twitter entre 2008 et 2012?"
+- Avant : Crash après 53 itérations (erreur OpenAI)
+- Après : Arrêt propre à l'itération 95 + résumé partiel retourné
+
+COMPORTEMENT :
+```
+🔧 [Exécuteur] Itération 95...
+⚠️  [Exécuteur] Contexte trop grand - passage au résumé avec les résultats partiels...
+📝 [Summarizer] Production du résumé final...
+⚠️ **Résultats partiels** (exploration interrompue)
+[... résumé ...]
+```
 
 ================================================================================
                               FIN DE L'HISTORIQUE

@@ -10,6 +10,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+import openai  # Pour capturer BadRequestError
 
 from agents.planner import PlannerAgent
 from agents.prioritizer import PrioritizerAgent
@@ -37,6 +38,8 @@ class GraphState(TypedDict):
     messages: Annotated[list, add_messages]
     # Flag de fin
     finished: bool
+    # Flag si le contexte a été dépassé (résultats partiels)
+    context_exceeded: bool
 
 
 class GraphOrchestrator:
@@ -145,13 +148,34 @@ Commence par la première étape du plan.""")
         """Noeud Exécuteur - Exécute le plan en utilisant les outils."""
         print(f"\n🔧 [Exécuteur] Itération {state['iteration'] + 1}...")
 
-        # Appeler le LLM avec les outils
-        response = self.executor_llm_with_tools.invoke(state["messages"])
+        try:
+            # Appeler le LLM avec les outils
+            response = self.executor_llm_with_tools.invoke(state["messages"])
 
-        return {
-            "messages": [response],
-            "iteration": state["iteration"] + 1
-        }
+            return {
+                "messages": [response],
+                "iteration": state["iteration"] + 1
+            }
+
+        except openai.BadRequestError as e:
+            # Gérer le dépassement de contexte
+            if "context_length_exceeded" in str(e):
+                print("\n⚠️  [Exécuteur] Contexte trop grand - passage au résumé avec les résultats partiels...")
+
+                # Créer un message qui forcera le passage au summarizer
+                error_message = AIMessage(content="""EXPLORATION_COMPLETE
+
+Note: L'exploration a été interrompue car le contexte était trop volumineux.
+Les résultats ci-dessous sont partiels mais contiennent les informations trouvées jusqu'à présent.""")
+
+                return {
+                    "messages": [error_message],
+                    "iteration": state["iteration"] + 1,
+                    "context_exceeded": True
+                }
+            else:
+                # Autre erreur OpenAI - la propager
+                raise
 
     def _should_use_tools(self, state: GraphState) -> str:
         """Décide si on doit appeler des outils ou passer à la suite."""
@@ -215,11 +239,19 @@ Continue l'exploration ou dis "EXPLORATION_COMPLETE" si tu as assez d'informatio
         # Extraire tous les résultats des messages
         raw_results = self._extract_results_summary(state["messages"])
 
+        # Ajouter une note si le contexte a été dépassé
+        if state.get("context_exceeded", False):
+            raw_results += "\n\n⚠️ NOTE: L'exploration a été interrompue (contexte trop volumineux). Ces résultats sont partiels."
+
         summary = self.summarizer.summarize(
             original_query=state["query"],
             plan=state["plan"],
             raw_results=raw_results
         )
+
+        # Ajouter un avertissement en début de résumé si nécessaire
+        if state.get("context_exceeded", False):
+            summary = "⚠️ **Résultats partiels** (exploration interrompue)\n\n" + summary
 
         return {"summary": summary, "finished": True}
 
@@ -260,7 +292,8 @@ Continue l'exploration ou dis "EXPLORATION_COMPLETE" si tu as assez d'informatio
             "iteration": 0,
             "summary": "",
             "messages": [],
-            "finished": False
+            "finished": False,
+            "context_exceeded": False
         }
 
         # Exécuter le graphe
