@@ -153,7 +153,7 @@ Commence par la première étape du plan.""")
         Au lieu de tronquer (perdre l'info), on RÉSUME (préserver l'info condensée).
         C'est la vraie Option 2 : optimisation intelligente du contexte.
         """
-        print("   🗜️  Condensation du contexte en cours...")
+        print("   Condensation du contexte en cours...")
 
         # Séparer le message système
         system_msg = None
