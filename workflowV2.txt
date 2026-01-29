@@ -1,0 +1,247 @@
+================================================================================
+                    SIREN INVESTIGATION AGENT
+                    WORKFLOW V2 - DIAGRAMME SIMPLIFIE
+================================================================================
+
+================================================================================
+                    CLARIFICATION : LE ROLE D'OPENAI API
+================================================================================
+
+CONFUSION FREQUENTE:
+--------------------
+"OpenAI est en bas du schema, est-ce la fin du processus ?"
+
+NON ! OpenAI n'est pas une ETAPE du workflow, c'est un SERVICE EXTERNE
+que les agents CONSULTENT a chaque fois qu'ils ont besoin de "reflechir".
+
+ANALOGIE:
+---------
+Imaginez une entreprise avec 4 employes (les agents) qui ont chacun
+un telephone pour appeler un expert externe (OpenAI) :
+
+    +------------------+
+    |    ENTREPRISE    |
+    |                  |
+    |  [Planner]  -----|----- telephone ----> [Expert OpenAI]
+    |  [Executor] -----|----- telephone ----> [Expert OpenAI]
+    |  [Prioritizer] --|----- telephone ----> [Expert OpenAI]
+    |  [Summarizer] ---|----- telephone ----> [Expert OpenAI]
+    |                  |
+    +------------------+
+
+Chaque agent appelle LE MEME expert (GPT-4o-mini) mais avec des
+INSTRUCTIONS DIFFERENTES (prompts systeme).
+
+QUI FAIT QUOI ?
+---------------
+
+ARCHITECTURE: 3 AGENTS + 1 EXECUTEUR
+
++-------------+----------------------+---------------------------+-------------+
+| Composant   | Fichier              | Role                      | Outils?     |
++-------------+----------------------+---------------------------+-------------+
+| PLANNER     | agents/planner.py    | Cree le plan d'action     | NON         |
+|             |                      | "1. lookup 2. neighbors"  |             |
++-------------+----------------------+---------------------------+-------------+
+| EXECUTOR    | orchestrator.py      | Execute le plan en        | OUI         |
+|             | (integre, pas un     | appelant les outils ES    | (seul!)     |
+|             | fichier agent/)      |                           |             |
++-------------+----------------------+---------------------------+-------------+
+| PRIORITIZER | agents/prioritizer.py| Priorise les pistes       | NON         |
+|             |                      | d'exploration             |             |
++-------------+----------------------+---------------------------+-------------+
+| SUMMARIZER  | agents/summarizer.py | Redige le resume final    | NON         |
+|             |                      | lisible pour l'humain     |             |
++-------------+----------------------+---------------------------+-------------+
+
+DIFFERENCE CLE:
+- Les 3 AGENTS (Planner, Prioritizer, Summarizer) = reflechissent seulement
+- L'EXECUTEUR = agit sur les donnees (appelle les outils Elasticsearch)
+
+TOUS consultent OpenAI pour "reflechir", mais seul l'Executor peut AGIR.
+
+
+================================================================================
+                    DIAGRAMME PRINCIPAL - FLUX COMPLET V2
+================================================================================
+
+Copiez ce code dans https://mermaid.live
+
+```mermaid
+flowchart TB
+    %% ===== UTILISATEUR =====
+    USER(["<b>UTILISATEUR</b><br/>Question en langage naturel"])
+
+    %% ===== POINT D'ENTREE =====
+    MAIN["<b>main.py</b><br/>CLI + chargement config"]
+
+    %% ===== ORCHESTRATEUR LANGGRAPH =====
+    subgraph ORCH["<b>ORCHESTRATEUR LangGraph</b> (orchestrator.py)"]
+        direction TB
+
+        STATE[("<b>GraphState</b><br/>Etat partage entre noeuds")]
+
+        PLAN["<b>1. PLANNER</b><br/>Cree le plan d'action"]
+        EXEC["<b>2. EXECUTOR</b><br/>Execute le plan"]
+        TOOLS_NODE["<b>3. TOOLS</b><br/>Appelle les outils ES"]
+        PRIO["<b>4. PRIORITIZER</b><br/>Optimise l'exploration"]
+        SUMM["<b>5. SUMMARIZER</b><br/>Resume les resultats"]
+
+        %% Flux interne
+        PLAN --> EXEC
+        EXEC -->|"tool_calls"| TOOLS_NODE
+        TOOLS_NODE -->|"resultats"| EXEC
+        EXEC -.->|"besoin priorisation"| PRIO
+        PRIO -.->|"prochains noeuds"| EXEC
+        EXEC -->|"EXPLORATION_COMPLETE"| SUMM
+    end
+
+    %% ===== SERVICES EXTERNES =====
+    subgraph EXT["<b>SERVICES EXTERNES</b>"]
+        direction LR
+        OPENAI[["<b>OpenAI API</b><br/>GPT-4o-mini<br/><i>Le 'cerveau' des agents</i>"]]
+        ES[("<b>Elasticsearch</b><br/>Graphe SIREN<br/><i>Les donnees</i>")]
+    end
+
+    %% ===== RESULTAT =====
+    RESULT(["<b>REPONSE</b><br/>Resume structure"])
+
+    %% ===== CONNEXIONS PRINCIPALES =====
+    USER ==>|"1"| MAIN
+    MAIN ==>|"2"| STATE
+    STATE ==>|"3"| PLAN
+    SUMM ==>|"8"| RESULT
+    RESULT ==>|"9"| USER
+
+    %% ===== CONNEXIONS OPENAI (tous les agents l'appellent) =====
+    PLAN <-->|"4a. Genere plan"| OPENAI
+    EXEC <-->|"4b. Decide outils"| OPENAI
+    PRIO <-->|"6. Priorise"| OPENAI
+    SUMM <-->|"7. Resume"| OPENAI
+
+    %% ===== CONNEXION ELASTICSEARCH =====
+    TOOLS_NODE <-->|"5. Requetes ES"| ES
+
+    %% ===== STYLES =====
+    classDef userStyle fill:#E3F2FD,stroke:#1565C0,stroke-width:3px,color:#000
+    classDef mainStyle fill:#FFF3E0,stroke:#EF6C00,stroke-width:2px,color:#000
+    classDef orchStyle fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px,color:#000
+    classDef extStyle fill:#FCE4EC,stroke:#C2185B,stroke-width:2px,color:#000
+    classDef resultStyle fill:#E8EAF6,stroke:#3F51B5,stroke-width:3px,color:#000
+
+    class USER userStyle
+    class MAIN mainStyle
+    class ORCH orchStyle
+    class EXT extStyle
+    class RESULT resultStyle
+```
+
+================================================================================
+                    LEGENDE DU DIAGRAMME
+================================================================================
+
+NUMEROS SUR LES FLECHES (ordre d'execution):
+--------------------------------------------
+1. Utilisateur pose sa question via CLI
+2. main.py initialise l'orchestrateur et le GraphState
+3. Le Planner recoit la question
+4a. Planner APPELLE OpenAI -> "fais-moi un plan"
+4b. Executor APPELLE OpenAI -> "quel outil utiliser?"
+5. Tools execute les requetes Elasticsearch
+6. (optionnel) Prioritizer APPELLE OpenAI -> "quoi explorer ensuite?"
+7. Summarizer APPELLE OpenAI -> "resume ces resultats"
+8. Le resume sort de l'orchestrateur
+9. L'utilisateur recoit sa reponse
+
+TYPES DE FLECHES:
+-----------------
+==>  Fleche epaisse : flux principal (entree/sortie utilisateur)
+-->  Fleche normale : flux interne obligatoire
+-.-> Fleche pointillee : flux optionnel/conditionnel
+<--> Fleche double : appel + reponse (communication bidirectionnelle)
+
+FORMES:
+-------
+([ ]) Rectangle arrondi : points d'entree/sortie (utilisateur, resultat)
+[  ]  Rectangle : composants internes
+[[ ]] Rectangle double : service externe (OpenAI)
+(  )  Cylindre : stockage de donnees (Elasticsearch, State)
+
+
+================================================================================
+                    VERSION ULTRA-SIMPLIFIEE (pour explication orale)
+================================================================================
+
+```mermaid
+flowchart LR
+    Q["Question"]
+    P["Planner"]
+    E["Executor"]
+    T["Tools"]
+    S["Summarizer"]
+    R["Reponse"]
+    AI(["OpenAI<br/>GPT-4o"])
+    DB[("Elasticsearch")]
+
+    Q --> P
+    P --> E
+    E <--> T
+    T <--> DB
+    E --> S
+    S --> R
+
+    P <-.-> AI
+    E <-.-> AI
+    S <-.-> AI
+
+    style AI fill:#FCE4EC,stroke:#C2185B
+    style DB fill:#E3F2FD,stroke:#1565C0
+```
+
+EXPLICATION EN UNE PHRASE:
+--------------------------
+"La question passe par le Planner qui cree un plan, l'Executor execute
+ce plan en appelant des Tools qui interrogent Elasticsearch, puis le
+Summarizer produit la reponse - et a chaque etape, les agents consultent
+OpenAI pour 'reflechir'."
+
+
+================================================================================
+                    SCHEMA TEXTUEL (si Mermaid ne marche pas)
+================================================================================
+
+                            UTILISATEUR
+                                |
+                                | "Qui a investi dans Airbnb?"
+                                v
+                          +-----------+
+                          | main.py   |
+                          +-----------+
+                                |
+        +-----------------------|------------------------+
+        |           ORCHESTRATEUR LangGraph              |
+        |                       |                        |
+        |                       v                        |
+        |  +----------+    +----------+    +----------+  |
+        |  | PLANNER  |--->| EXECUTOR |--->|SUMMARIZER|  |
+        |  +----+-----+    +----+-----+    +----+-----+  |
+        |       |               |               |        |
+        +-------|---------------|---------------|--------+
+                |               |               |
+                v               v               v
+        +-----------------------------------------------+
+        |              OPENAI API (GPT-4o-mini)         |
+        |  "Le cerveau qui reflechit pour les agents"   |
+        +-----------------------------------------------+
+                                |
+                                | (Executor utilise aussi)
+                                v
+                        +---------------+
+                        | ELASTICSEARCH |
+                        |  (donnees)    |
+                        +---------------+
+
+
+================================================================================
+                              FIN DU DOCUMENT
+================================================================================

@@ -1,0 +1,204 @@
+================================================================================
+         BATTERIE DE TESTS - SIREN Investigation Agent
+                    Date: 29 Janvier 2026
+================================================================================
+
+OBJECTIF: Valider le bon fonctionnement du systeme multi-agents sur differents
+          types de requetes d'investigation.
+
+CRITERES D'EVALUATION:
+  [OK]      = Resultat correct et complet
+  [PARTIEL] = Resultat partiellement correct (donnees manquantes ou imprecises)
+  [ECHEC]   = Resultat incorrect ou echec de la requete
+  [INFO]    = Test informatif (pas de bonne/mauvaise reponse attendue)
+
+================================================================================
+                    CATEGORIE 1: RECHERCHE D'ENTITES
+================================================================================
+
+--- TEST 1.1 ---
+Requete: "Donne-moi des informations sur Twitter"
+Attendu: Informations sur Twitter (company, San Francisco, 2006)
+Resultat: Twitter identifie - company fondee en 2006, San Francisco, USA
+          6 investisseurs et 5 investissements trouves
+Verdict: [OK]
+
+--- TEST 1.2 ---
+Requete: "Qui est Kleiner Perkins?"
+Attendu: Informations sur l'investisseur Kleiner Perkins Caufield & Byers
+Resultat: Kleiner Perkins Caufield & Byers identifie comme investisseur
+          38 entreprises dans son portefeuille listees
+Verdict: [OK]
+
+================================================================================
+                    CATEGORIE 2: LISTE D'INVESTISSEURS
+================================================================================
+
+--- TEST 2.1 ---
+Requete: "Liste les investisseurs de Facebook"
+Attendu: 9 investisseurs (Microsoft, Digital Sky Technologies, Elevation Partners,
+         European Founders Fund, Goldman Sachs, SV Angel, TriplePoint Capital,
+         Li Ka-shing, Reid Hoffman)
+Resultat: 9 investisseurs correctement identifies:
+          Microsoft, Digital Sky Technologies, Elevation Partners,
+          European Founders Fund, Goldman Sachs, SV Angel, TriplePoint Capital,
+          Li Ka-shing, Reid Hoffman
+Verdict: [OK]
+
+--- TEST 2.2 ---
+Requete: "Qui a investi dans Airbnb?"
+Attendu: 4 investisseurs (Keith Rabois, Y Combinator, Youniversity Ventures, Jeff Bezos)
+Resultat: 4 investisseurs correctement identifies:
+          Keith Rabois, Y Combinator, Youniversity Ventures, Jeff Bezos
+Verdict: [OK]
+
+================================================================================
+                    CATEGORIE 3: INVESTISSEMENTS PAR INVESTISSEUR
+================================================================================
+
+--- TEST 3.1 ---
+Requete: "Dans quelles entreprises Y Combinator a-t-il investi?"
+Attendu: Liste des companies investies par Y Combinator
+Resultat: 50 entreprises listees (limite MAX_ITEMS atteinte)
+          Exemples: Airbnb, Dropbox, Reddit, Scribd, Posterous, Weebly...
+Verdict: [OK]
+
+--- TEST 3.2 ---
+Requete: "Quels sont les investissements de Ron Conway?"
+Attendu: Liste des investissements faits par Ron Conway
+Resultat: 47 entreprises listees avec succes
+          Exemples: Twitter, Google, Facebook, PayPal, Digg...
+Verdict: [OK]
+
+================================================================================
+                    CATEGORIE 4: LIENS ENTRE ENTITES
+================================================================================
+
+--- TEST 4.1 ---
+Requete: "Trouve un lien entre Twitter et Facebook"
+Attendu: Investisseurs communs (s'il y en a) ou absence de lien
+Resultat: Aucun investisseur commun trouve entre Twitter et Facebook
+          (Resultat correct - pas de lien direct dans la base)
+Verdict: [OK]
+
+--- TEST 4.2 ---
+Requete: "Y a-t-il des investisseurs communs entre Airbnb et Domo?"
+Attendu: Jeff Bezos (investisseur commun)
+Resultat: Jeff Bezos identifie comme investisseur commun
+Verdict: [OK]
+
+================================================================================
+                    CATEGORIE 5: FILTRES TEMPORELS
+================================================================================
+
+--- TEST 5.1 ---
+Requete: "Quels investissements Twitter a-t-il recus entre 2007 et 2009?"
+Attendu: Investissements de 2007 (5M), 2008 (15M), 2009 (35M + 100M)
+Resultat: 4 investissements correctement identifies:
+          - 2007: 5,000,000 USD
+          - 2008: 15,000,000 USD
+          - 2009: 35,000,000 USD et 100,000,000 USD
+Verdict: [OK]
+
+--- TEST 5.2 ---
+Requete: "Quel est le plus gros investissement recu par Facebook?"
+Attendu: 1.5 milliard USD en 2011
+Resultat: 1,500,000,000 USD (1.5 milliard) en janvier 2011
+          par Goldman Sachs et Digital Sky Technologies
+Verdict: [OK]
+
+================================================================================
+                    CATEGORIE 6: REQUETES COMPLEXES
+================================================================================
+
+--- TEST 6.1 ---
+Requete: "Compare les investisseurs de Twitter et Airbnb"
+Attendu: Liste des investisseurs de chaque entreprise + comparaison
+Resultat: Comparaison complete effectuee:
+          - Twitter: 6 investisseurs (Tim Ferriss, Union Square Ventures, etc.)
+          - Airbnb: 4 investisseurs (Y Combinator, Jeff Bezos, etc.)
+          - Analyse comparative fournie
+Verdict: [OK]
+
+--- TEST 6.2 ---
+Requete: "Quel investisseur a le plus diversifie son portefeuille?"
+Attendu: Analyse des investisseurs avec le plus de companies differentes
+Resultat: Timeout - requete trop complexe sans criteres specifiques
+          Necessite exploration de tous les investisseurs de la base
+Note: Limitation connue pour les requetes d'agregation globale
+Verdict: [PARTIEL]
+
+================================================================================
+                    CATEGORIE 7: PIEGES CONNAISSANCES GENERALES
+================================================================================
+
+--- TEST 7.1 ---
+Requete: "Qui est le fondateur de Amazon?"
+Attendu: Jeff Bezos (connaissance generale, pas dans le graphe)
+Note: Le systeme doit indiquer que cette info vient de connaissances generales
+Resultat: ERREUR - Le LLM a tente d'utiliser index="person" qui n'existe pas
+          (seuls company, investor, investment sont valides)
+          Le modele de donnees ne contient pas de relation "fondateur"
+Verdict: [ECHEC]
+
+--- TEST 7.2 ---
+Requete: "Est-ce que Elon Musk a investi dans Twitter?"
+Attendu: Recherche dans le graphe + indication si non trouve
+Note: Elon Musk n'est probablement pas dans la base demo
+Resultat: Recherche effectuee dans l'index investor
+          "Elon Musk" non trouve dans la base de donnees
+          Systeme indique clairement l'absence de donnees
+Verdict: [OK]
+
+--- TEST 7.3 ---
+Requete: "Quelle est la capitalisation boursiere de Google?"
+Attendu: Le systeme doit indiquer que cette info n'est pas dans le graphe
+Note: Test pour verifier que le systeme ne fabrique pas de donnees
+Resultat: Systeme a cherche Google, trouve les investissements historiques
+          (100K USD en 1998, 25M USD en 1999)
+          Indique clairement: "La capitalisation boursiere actuelle n'est
+          pas directement accessible" et "Limites: Aucune information sur
+          la capitalisation boursiere actuelle"
+          N'a PAS fabrique de donnees fictives
+Verdict: [OK]
+
+================================================================================
+                         SYNTHESE DES RESULTATS
+================================================================================
+
+Total tests: 15
+
+OK:      12 / 15  (80%)
+PARTIEL:  1 / 15  ( 7%)
+ECHEC:    1 / 15  ( 7%)
+INFO:     0 / 15  ( 0%)
+
+NOTE GLOBALE: 83 / 100
+
+Calcul: (12 x 100% + 1 x 50% + 1 x 0%) / 15 = 83.3%
+
+================================================================================
+                            ANALYSE DETAILLEE
+================================================================================
+
+POINTS FORTS:
++ Recherche d'entites tres fiable (100% categories 1-2)
++ Navigation dans le graphe fonctionnelle (get_neighbors, find_common_investors)
++ Filtres temporels corrects apres correction du 29/01
++ Ne fabrique pas de donnees (Test 7.3 reussi)
++ Indique clairement quand une information n'est pas trouvee
+
+POINTS FAIBLES:
+- Test 7.1: Le LLM ne connait pas les index valides (person n'existe pas)
+  -> Amelioration possible: ajouter validation des index dans le prompt
+- Test 6.2: Requetes d'agregation globale trop complexes
+  -> Limitation structurelle: pas d'outil pour "tous les investisseurs"
+
+RECOMMANDATIONS:
+1. Ajouter une liste explicite des index valides dans le prompt du planner
+2. Creer un outil specifique pour les statistiques globales si necessaire
+3. Le systeme est OPERATIONNEL pour les cas d'usage principaux
+
+================================================================================
+                              FIN DES TESTS
+================================================================================

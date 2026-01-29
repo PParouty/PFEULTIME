@@ -1,0 +1,284 @@
+================================================================================
+                    SIREN INVESTIGATION AGENT
+                    WORKFLOW V3 - VERSION DEFINITIVE
+================================================================================
+
+================================================================================
+                    ARCHITECTURE CLAIRE : 3 AGENTS + 1 EXECUTEUR
+================================================================================
+
+STRUCTURE DU CODE:
+------------------
+
+    ZoneDeTravailDeClaude/
+    |
+    |-- agents/                    # 3 AGENTS SPECIALISES
+    |   |-- planner.py             #   -> PlannerAgent
+    |   |-- prioritizer.py         #   -> PrioritizerAgent
+    |   |-- summarizer.py          #   -> SummarizerAgent
+    |
+    |-- core/
+    |   |-- orchestrator.py        # ORCHESTRATEUR + EXECUTEUR INTEGRE
+    |
+    |-- tools/
+        |-- elasticsearch_tools.py # 4 OUTILS DETERMINISTES
+
+
+TABLEAU DEFINITIF - QUI FAIT QUOI:
+----------------------------------
+
++---------------+----------------------+---------------------------+---------------+
+| Composant     | Fichier              | Role                      | Appelle       |
+|               |                      |                           | des outils?   |
++---------------+----------------------+---------------------------+---------------+
+| PLANNER       | agents/planner.py    | Cree le plan d'action     | NON           |
+|               |                      | a partir de la question   |               |
++---------------+----------------------+---------------------------+---------------+
+| EXECUTOR      | core/orchestrator.py | Execute le plan en        | OUI           |
+|               | (integre, lignes     | appelant les outils       | (lookup,      |
+|               | 64-65 et 307-344)    | Elasticsearch             | neighbors...) |
++---------------+----------------------+---------------------------+---------------+
+| PRIORITIZER   | agents/prioritizer.py| Optimise l'exploration    | NON           |
+|               |                      | Priorise les pistes       |               |
++---------------+----------------------+---------------------------+---------------+
+| SUMMARIZER    | agents/summarizer.py | Redige le resume final    | NON           |
+|               |                      | lisible pour l'humain     |               |
++---------------+----------------------+---------------------------+---------------+
+
+POURQUOI L'EXECUTOR EST DIFFERENT ?
+-----------------------------------
+
+Les 3 AGENTS (Planner, Prioritizer, Summarizer):
+  - Sont des classes separees dans agents/
+  - Ont un prompt systeme specifique
+  - Ne font que "reflechir" (generer du texte)
+  - N'interagissent PAS avec les donnees
+
+L'EXECUTOR:
+  - Est integre dans l'orchestrateur (pas de fichier separe)
+  - Utilise bind_tools() pour APPELER les outils
+  - C'est le SEUL qui peut agir sur Elasticsearch
+  - C'est le MOTEUR qui fait avancer l'exploration
+
+CODE DE L'EXECUTOR (orchestrator.py):
+-------------------------------------
+
+    # Ligne 64-65 : Creation de l'executor avec outils
+    self.executor_llm = ChatOpenAI(model=model_name, temperature=0.0)
+    self.executor_llm_with_tools = self.executor_llm.bind_tools(TOOLS)
+
+    # Ligne 307-344 : Le noeud executor
+    def _executor_node(self, state: GraphState) -> dict:
+        response = self.executor_llm_with_tools.invoke(messages)
+        # Le LLM decide quels outils appeler (tool_calls)
+        return {"messages": [response], "iteration": state["iteration"] + 1}
+
+
+================================================================================
+                    DIAGRAMME DEFINITIF - FLUX COMPLET V3
+================================================================================
+
+```mermaid
+flowchart TB
+    %% ===== UTILISATEUR =====
+    USER(["<b>UTILISATEUR</b><br/>Question en langage naturel"])
+
+    %% ===== POINT D'ENTREE =====
+    MAIN["<b>main.py</b><br/>CLI + config"]
+
+    %% ===== ORCHESTRATEUR =====
+    subgraph ORCH["<b>ORCHESTRATEUR LangGraph</b><br/>(core/orchestrator.py)"]
+        direction TB
+
+        STATE[("<b>GraphState</b><br/>Etat partage")]
+
+        subgraph AGENTS["<b>3 AGENTS</b><br/>(dossier agents/)"]
+            PLAN["<b>PLANNER</b><br/>Cree le plan<br/><i>planner.py</i>"]
+            PRIO["<b>PRIORITIZER</b><br/>Priorise<br/><i>prioritizer.py</i>"]
+            SUMM["<b>SUMMARIZER</b><br/>Resume<br/><i>summarizer.py</i>"]
+        end
+
+        subgraph ENGINE["<b>MOTEUR D'EXECUTION</b><br/>(integre dans orchestrator.py)"]
+            EXEC["<b>EXECUTOR</b><br/>Execute le plan<br/>Appelle les outils"]
+            TOOLS_NODE["<b>ToolNode</b><br/>Interface outils"]
+        end
+
+        %% Flux interne
+        PLAN --> EXEC
+        EXEC -->|"tool_calls"| TOOLS_NODE
+        TOOLS_NODE -->|"resultats"| EXEC
+        EXEC -.->|"besoin aide"| PRIO
+        PRIO -.->|"priorites"| EXEC
+        EXEC -->|"COMPLETE"| SUMM
+    end
+
+    %% ===== SERVICES EXTERNES =====
+    OPENAI[["<b>OpenAI API</b><br/>GPT-4o-mini<br/><i>Cerveau partage</i>"]]
+
+    subgraph DATA["<b>OUTILS + DONNEES</b>"]
+        TOOLS["<b>4 Outils</b><br/>lookup_entity<br/>get_neighbors<br/>find_common_investors<br/>find_investments_in_period"]
+        ES[("<b>Elasticsearch</b><br/>Graphe SIREN")]
+    end
+
+    %% ===== RESULTAT =====
+    RESULT(["<b>REPONSE</b><br/>Resume structure"])
+
+    %% ===== FLUX PRINCIPAL =====
+    USER ==>|"1. Question"| MAIN
+    MAIN ==>|"2. Init"| STATE
+    STATE --> PLAN
+    SUMM ==> RESULT
+    RESULT ==>|"9. Reponse"| USER
+
+    %% ===== APPELS OPENAI =====
+    PLAN <-.->|"3. Genere plan"| OPENAI
+    EXEC <-.->|"4. Decide outils"| OPENAI
+    PRIO <-.->|"6. Analyse"| OPENAI
+    SUMM <-.->|"8. Redige"| OPENAI
+
+    %% ===== ACCES DONNEES =====
+    TOOLS_NODE -->|"5. Appel"| TOOLS
+    TOOLS <-->|"7. Requetes"| ES
+
+    %% ===== STYLES =====
+    classDef userStyle fill:#E3F2FD,stroke:#1565C0,stroke-width:3px,color:#000
+    classDef mainStyle fill:#FFF3E0,stroke:#EF6C00,stroke-width:2px,color:#000
+    classDef agentStyle fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px,color:#000
+    classDef engineStyle fill:#FFF9C4,stroke:#F9A825,stroke-width:2px,color:#000
+    classDef openaiStyle fill:#FCE4EC,stroke:#C2185B,stroke-width:2px,color:#000
+    classDef dataStyle fill:#E0F7FA,stroke:#00838F,stroke-width:2px,color:#000
+    classDef resultStyle fill:#E8EAF6,stroke:#3F51B5,stroke-width:3px,color:#000
+
+    class USER,RESULT userStyle
+    class MAIN mainStyle
+    class AGENTS agentStyle
+    class ENGINE engineStyle
+    class OPENAI openaiStyle
+    class DATA dataStyle
+```
+
+================================================================================
+                    VERSION SIMPLIFIEE POUR PRESENTATION ORALE
+================================================================================
+
+```mermaid
+flowchart LR
+    subgraph INPUT[" "]
+        Q(["Question"])
+    end
+
+    subgraph SYSTEM["<b>SYSTEME MULTI-AGENTS</b>"]
+        direction TB
+        P["<b>PLANNER</b><br/>Planifie"]
+        E["<b>EXECUTOR</b><br/>Execute"]
+        T["Tools"]
+        PR["<b>PRIORITIZER</b><br/>Priorise"]
+        S["<b>SUMMARIZER</b><br/>Resume"]
+
+        P --> E
+        E <--> T
+        E -.-> PR
+        PR -.-> E
+        E --> S
+    end
+
+    subgraph EXTERNAL[" "]
+        AI(["OpenAI<br/><i>Cerveau</i>"])
+        DB[("Elastic<br/><i>Donnees</i>")]
+    end
+
+    subgraph OUTPUT[" "]
+        R(["Reponse"])
+    end
+
+    Q --> P
+    S --> R
+
+    P <-.-> AI
+    E <-.-> AI
+    PR <-.-> AI
+    S <-.-> AI
+    T <--> DB
+
+    style AI fill:#FCE4EC,stroke:#C2185B
+    style DB fill:#E0F7FA,stroke:#00838F
+    style E fill:#FFF9C4,stroke:#F9A825,stroke-width:2px
+```
+
+================================================================================
+                    SCHEMA ASCII (backup)
+================================================================================
+
+    +------------------------------------------------------------------+
+    |                        UTILISATEUR                                |
+    |                   "Qui a investi dans Airbnb?"                    |
+    +--------------------------------+---------------------------------+
+                                     |
+                                     v
+    +------------------------------------------------------------------+
+    |                          main.py (CLI)                            |
+    +--------------------------------+---------------------------------+
+                                     |
+    +================================|=================================+
+    ||                    ORCHESTRATEUR LangGraph                     ||
+    ||                                                                ||
+    ||  +------------------+     +------------------+                  ||
+    ||  |    3 AGENTS      |     | MOTEUR EXECUTION |                  ||
+    ||  |                  |     |                  |                  ||
+    ||  | [PLANNER]--------|---->| [EXECUTOR]       |                  ||
+    ||  |                  |     |      |           |                  ||
+    ||  | [PRIORITIZER]<---|-----+      v           |                  ||
+    ||  |                  |     | [ToolNode]       |                  ||
+    ||  | [SUMMARIZER]<----|-----+      |           |                  ||
+    ||  +------------------+     +------|----------+                  ||
+    ||                                  |                              ||
+    +===================================|==============================+
+                |       |       |       |
+                v       v       v       v
+    +------------------------------------------------------------------+
+    |                      OPENAI API (GPT-4o-mini)                     |
+    |              "Cerveau" consulte par tous les agents               |
+    +------------------------------------------------------------------+
+                                        |
+                                        v
+                            +----------------------+
+                            |    ELASTICSEARCH     |
+                            |   (Graphe SIREN)     |
+                            +----------------------+
+
+
+================================================================================
+                    RESUME POUR LA SOUTENANCE
+================================================================================
+
+PHRASE D'ACCROCHE:
+------------------
+"Notre systeme utilise 3 agents specialises coordonnes par un orchestrateur
+LangGraph, avec un executeur central qui est le seul a interagir avec les
+donnees Elasticsearch."
+
+POINTS CLES A RETENIR:
+----------------------
+
+1. ARCHITECTURE = 3 Agents + 1 Executeur + 4 Outils
+
+2. LES 3 AGENTS (reflechissent mais n'agissent pas):
+   - Planner: decompose la question en plan
+   - Prioritizer: optimise l'exploration
+   - Summarizer: redige la reponse finale
+
+3. L'EXECUTEUR (agit sur les donnees):
+   - Integre dans l'orchestrateur (pas un fichier separe)
+   - Seul composant avec bind_tools()
+   - Boucle centrale: decide -> appelle outil -> analyse -> repete
+
+4. OPENAI = cerveau partage par tous (via appels API)
+
+5. ELASTICSEARCH = source de donnees (graphe companies/investors)
+
+SCORE DE VALIDATION: 83/100 (12 OK, 1 PARTIEL, 1 ECHEC sur 15 tests)
+
+
+================================================================================
+                              FIN DU DOCUMENT
+================================================================================

@@ -1,0 +1,583 @@
+================================================================================
+                    SIREN INVESTIGATION AGENT
+                    ARCHITECTURE & WORKFLOW
+                    Documentation Technique
+================================================================================
+
+================================================================================
+                    PARTIE 1 : ARCHITECTURE DU SYSTEME
+================================================================================
+
+------------------------------------------------------------------------------
+1.1 VUE D'ENSEMBLE
+------------------------------------------------------------------------------
+
+Notre systeme est un "Agent Multi-Agents" qui permet d'explorer un graphe
+de donnees d'entreprises et d'investissements en langage naturel.
+
+L'idee fondamentale est simple :
+
+    Utilisateur: "Qui a investi dans Airbnb?"
+         |
+         v
+    [Systeme Multi-Agents]  -->  Decompose la question
+         |                       Execute des requetes
+         v                       Analyse les resultats
+    Reponse structuree avec les investisseurs d'Airbnb
+
+Au lieu d'un seul programme monolithique, nous utilisons plusieurs "agents"
+specialises qui collaborent, coordonnes par un "orchestrateur".
+
+------------------------------------------------------------------------------
+1.2 LES TECHNOLOGIES UTILISEES
+------------------------------------------------------------------------------
+
++------------------+----------------------------------------------------------+
+| Technologie      | Role et Pertinence                                       |
++------------------+----------------------------------------------------------+
+| Python 3.12      | Langage principal - ecosysteme IA mature                 |
++------------------+----------------------------------------------------------+
+| LangChain        | Framework d'abstraction pour LLMs                        |
+|                  | -> Permet de changer de modele facilement                |
+|                  | -> Fournit des "prompts templates" reutilisables         |
+|                  | -> Gere la serialisation des messages                    |
++------------------+----------------------------------------------------------+
+| LangGraph        | Framework de "state machines" pour agents                |
+|                  | -> Permet de definir un GRAPHE de noeuds (agents)        |
+|                  | -> Gere les transitions conditionnelles                  |
+|                  | -> Maintient un ETAT partage entre les noeuds            |
+|                  | -> CRUCIAL: permet les boucles d'exploration             |
++------------------+----------------------------------------------------------+
+| OpenAI GPT-4o    | Le "cerveau" - Large Language Model                      |
+| mini             | -> Comprend le langage naturel                           |
+|                  | -> Genere des plans d'action                             |
+|                  | -> Decide quels outils utiliser                          |
+|                  | -> Resume les resultats                                  |
++------------------+----------------------------------------------------------+
+| Elasticsearch    | Base de donnees orientee documents                       |
+|                  | -> Stocke le graphe SIREN (companies, investors, etc.)   |
+|                  | -> Permet des recherches textuelles rapides              |
+|                  | -> Supporte les requetes complexes (filtres, agregations)|
++------------------+----------------------------------------------------------+
+| requests         | Client HTTP Python                                       |
+|                  | -> Remplace la lib elasticsearch (problemes SSL)         |
+|                  | -> Communication directe avec ES via REST API            |
++------------------+----------------------------------------------------------+
+
+POURQUOI LANGGRAPH PLUTOT QUE LANGCHAIN SEUL ?
+
+LangChain permet de creer des "chains" (sequences lineaires):
+    Input -> LLM -> Output
+
+Mais notre cas d'usage necessite des BOUCLES:
+    Plan -> Execute -> Analyse -> Besoin de plus? -> Re-execute...
+
+LangGraph ajoute cette capacite en definissant un GRAPHE d'etats
+avec des transitions conditionnelles (comme une machine a etats finis).
+
+------------------------------------------------------------------------------
+1.3 STRUCTURE DES FICHIERS
+------------------------------------------------------------------------------
+
+ZoneDeTravailDeClaude/
+|
+|-- main.py                      # Point d'entree CLI
+|                                # -> Mode interactif ou requete unique
+|                                # -> Charge la configuration (.env)
+|                                # -> Instancie l'orchestrateur
+|
+|-- .env                         # Configuration (cles API, URLs)
+|-- requirements.txt             # Dependances Python
+|
+|-- core/
+|   |-- orchestrator.py          # COEUR DU SYSTEME
+|                                # -> Definit le GraphState (etat partage)
+|                                # -> Construit le graphe LangGraph
+|                                # -> Coordonne tous les agents
+|                                # -> Gere la condensation du contexte
+|
+|-- agents/
+|   |-- planner.py               # Agent PLANIFICATEUR
+|   |                            # -> Recoit la question utilisateur
+|   |                            # -> Cree un plan d'action structure
+|   |                            # -> Identifie les outils a utiliser
+|   |
+|   |-- prioritizer.py           # Agent PRIORISATION
+|   |                            # -> Analyse les resultats partiels
+|   |                            # -> Decide quels noeuds explorer ensuite
+|   |                            # -> Optimise le parcours du graphe
+|   |
+|   |-- summarizer.py            # Agent RESUME
+|                                # -> Recoit les resultats bruts
+|                                # -> Produit un resume lisible
+|                                # -> Structure: Reponse/Decouvertes/Limites
+|
+|-- tools/
+    |-- elasticsearch_tools.py   # OUTILS DETERMINISTES (pas de LLM)
+                                 # -> lookup_entity: chercher par nom
+                                 # -> get_neighbors: voisins d'un noeud
+                                 # -> find_common_investors: liens
+                                 # -> find_investments_in_period: filtres
+
+------------------------------------------------------------------------------
+1.4 LES AGENTS EN DETAIL
+------------------------------------------------------------------------------
+
+AGENT 1: PLANIFICATEUR (planner.py)
+------------------------------------
+Role: Transformer une question en plan d'action executable
+
+Entree:  "Qui a investi dans Facebook?"
+
+Sortie:  "Plan d'action:
+          1. lookup_entity(index='company', label='Facebook')
+          2. get_neighbors(entity_type='company', entity_id='company/facebook')
+          3. Analyser les investisseurs retournes"
+
+Comment: Le LLM connait les outils disponibles (via le prompt systeme)
+         et decompose la question en etapes logiques.
+
+
+AGENT 2: EXECUTEUR (integre dans orchestrator.py)
+-------------------------------------------------
+Role: Executer le plan en appelant les outils
+
+Fonctionnement:
+  1. Recoit le plan du Planificateur
+  2. Appelle les outils via "tool_calls" (fonctionnalite OpenAI)
+  3. Analyse les resultats
+  4. Decide: continuer l'exploration ou terminer?
+
+Exemple de tool_call:
+  LLM -> "Je veux appeler lookup_entity avec index='company', label='Facebook'"
+  Systeme -> Execute la fonction Python -> Retourne les resultats
+  LLM -> Analyse les resultats, decide du prochain appel
+
+
+AGENT 3: PRIORISATION (prioritizer.py)
+--------------------------------------
+Role: Optimiser l'exploration du graphe
+
+Quand: Apres quelques iterations, si l'executeur n'a pas termine
+
+Entree:  - Objectif initial
+         - Noeuds deja explores
+         - Noeuds candidats (voisins non explores)
+         - Resultats partiels
+
+Sortie:  Liste ordonnee des prochains noeuds a explorer avec justification
+
+Utilite: Evite d'explorer le graphe au hasard, concentre sur les pistes
+         les plus prometteuses pour repondre a la question.
+
+
+AGENT 4: RESUME (summarizer.py)
+-------------------------------
+Role: Transformer les donnees brutes en reponse comprehensible
+
+Entree:  - Question originale
+         - Plan execute
+         - Resultats bruts (JSON, listes d'entites...)
+
+Sortie:  Resume structure:
+         ### Reponse a votre question
+         ### Decouvertes cles
+         ### Details
+         ### Limites
+
+Pourquoi: Les resultats bruts sont des JSON techniques.
+          L'utilisateur a besoin d'une reponse en langage naturel.
+
+------------------------------------------------------------------------------
+1.5 LES OUTILS ELASTICSEARCH
+------------------------------------------------------------------------------
+
+Les outils sont des FONCTIONS DETERMINISTES (pas de LLM).
+Ils executent des requetes precises sur Elasticsearch.
+
++-----------------------------+-----------------------------------------------+
+| Outil                       | Description                                   |
++-----------------------------+-----------------------------------------------+
+| lookup_entity               | Recherche une entite par son nom              |
+| (index, label)              | Ex: lookup_entity("company", "Twitter")       |
+|                             | -> Retourne {id: "company/twitter", ...}      |
++-----------------------------+-----------------------------------------------+
+| get_neighbors               | Recupere les voisins d'un noeud               |
+| (entity_type, entity_id)    | Ex: get_neighbors("company", "company/airbnb")|
+|                             | -> Retourne {investors: [...], investments: } |
++-----------------------------+-----------------------------------------------+
+| find_common_investors       | Trouve les investisseurs communs              |
+| (company_a, company_b)      | Ex: find_common_investors("company/airbnb",   |
+|                             |     "company/domo") -> ["Jeff Bezos"]         |
++-----------------------------+-----------------------------------------------+
+| find_investments_in_period  | Recherche avec filtres temporels/financiers   |
+| (year_min, year_max,        | Ex: find_investments_in_period(               |
+|  company_id, investor_id)   |     year_min=2010, company_id="company/fb")   |
++-----------------------------+-----------------------------------------------+
+
+STRUCTURE DU GRAPHE DE DONNEES:
+
+    [COMPANY]  <----  [INVESTMENT]  ---->  [INVESTOR]
+       |                   |                   |
+       |                   |                   |
+   - id                - id                 - id
+   - label             - label              - label
+   - city              - funded_year
+   - founded_year      - raised_amount
+   - countrycode       - raised_currency_code
+                       - companies[] (references)
+                       - investors[] (references)
+
+------------------------------------------------------------------------------
+1.6 LE GRAPHSTATE : L'ETAT PARTAGE
+------------------------------------------------------------------------------
+
+Tous les noeuds du graphe LangGraph partagent un ETAT commun:
+
+class GraphState(TypedDict):
+    query: str                    # Question initiale
+    plan: str                     # Plan genere par le Planner
+    exploration_results: list     # Resultats accumules
+    explored_nodes: list          # Noeuds deja visites
+    candidate_nodes: list         # Noeuds a explorer
+    iteration: int                # Compteur de boucles
+    summary: str                  # Resume final
+    messages: list                # Historique de conversation LLM
+    finished: bool                # Flag de fin
+    context_exceeded: bool        # Flag si contexte trop grand
+
+Chaque noeud peut LIRE et MODIFIER cet etat.
+C'est ce qui permet la coordination entre agents.
+
+------------------------------------------------------------------------------
+1.7 GESTION DU CONTEXTE (Optimisation Importante)
+------------------------------------------------------------------------------
+
+PROBLEME: Le LLM a une limite de contexte (128K tokens pour GPT-4o-mini)
+          Apres de nombreuses iterations, les messages accumules depassent.
+
+SOLUTION IMPLEMENTEE: Condensation intelligente
+
+Au lieu de TRONQUER (perdre de l'information):
+    [Msg1, Msg2, Msg3, ..., Msg50] -> [Msg45, Msg46, ..., Msg50]
+
+On RESUME (preserver l'information):
+    [Msg1...Msg45] -> LLM -> "Resume des decouvertes: X, Y, Z"
+    Final: [SystemMsg, ResumeCondense, Msg48, Msg49, Msg50]
+
+Declenchement: Quand messages > 25 (CONDENSE_THRESHOLD)
+Resultat: On preserve les informations cles tout en reduisant les tokens
+
+
+================================================================================
+                    PARTIE 2 : DIAGRAMME MERMAID
+================================================================================
+
+Copiez le code ci-dessous dans https://mermaid.live pour visualiser le workflow.
+
+------------------------------------------------------------------------------
+2.1 DIAGRAMME PRINCIPAL - FLUX COMPLET
+------------------------------------------------------------------------------
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#4A90A4', 'primaryTextColor': '#fff', 'primaryBorderColor': '#2E5A6B', 'lineColor': '#5C6BC0', 'secondaryColor': '#81C784', 'tertiaryColor': '#FFB74D'}}}%%
+
+flowchart TB
+    subgraph USER["<b>UTILISATEUR</b>"]
+        Q["Question en langage naturel"]
+    end
+
+    subgraph MAIN["<b>main.py</b> - Point d'entree"]
+        CLI["CLI Interactif"]
+        ENV["Chargement .env"]
+    end
+
+    subgraph ORCHESTRATOR["<b>core/orchestrator.py</b> - Coeur du systeme"]
+        direction TB
+
+        STATE["<b>GraphState</b><br/>Etat partage"]
+
+        subgraph GRAPH["Graphe LangGraph"]
+            direction LR
+            PLAN["<b>Planner</b><br/>Cree le plan"]
+            EXEC["<b>Executor</b><br/>Execute le plan"]
+            TOOLS_NODE["<b>ToolNode</b><br/>Appelle les outils"]
+            PRIO["<b>Prioritizer</b><br/>Priorise l'exploration"]
+            SUMM["<b>Summarizer</b><br/>Resume les resultats"]
+        end
+    end
+
+    subgraph AGENTS["<b>agents/</b> - Agents specialises"]
+        PLANNER_A["<b>planner.py</b><br/>Planificateur"]
+        PRIO_A["<b>prioritizer.py</b><br/>Priorisation"]
+        SUMM_A["<b>summarizer.py</b><br/>Resume"]
+    end
+
+    subgraph TOOLS["<b>tools/elasticsearch_tools.py</b>"]
+        LOOKUP["lookup_entity()"]
+        NEIGHBORS["get_neighbors()"]
+        COMMON["find_common_investors()"]
+        PERIOD["find_investments_in_period()"]
+    end
+
+    subgraph EXTERNAL["<b>Services Externes</b>"]
+        OPENAI["OpenAI API<br/>GPT-4o-mini"]
+        ES["Elasticsearch<br/>Graphe SIREN"]
+    end
+
+    %% Flux principal
+    Q --> CLI
+    CLI --> ENV
+    ENV --> STATE
+
+    STATE --> PLAN
+    PLAN --> EXEC
+    EXEC -->|"tool_calls"| TOOLS_NODE
+    TOOLS_NODE --> EXEC
+    EXEC -->|"besoin priorisation"| PRIO
+    PRIO --> EXEC
+    EXEC -->|"EXPLORATION_COMPLETE"| SUMM
+    SUMM --> RESULT["<b>Reponse structuree</b>"]
+
+    %% Liens agents
+    PLAN -.-> PLANNER_A
+    PRIO -.-> PRIO_A
+    SUMM -.-> SUMM_A
+
+    %% Liens outils
+    TOOLS_NODE --> LOOKUP
+    TOOLS_NODE --> NEIGHBORS
+    TOOLS_NODE --> COMMON
+    TOOLS_NODE --> PERIOD
+
+    %% Liens externes
+    PLANNER_A --> OPENAI
+    PRIO_A --> OPENAI
+    SUMM_A --> OPENAI
+    EXEC --> OPENAI
+    LOOKUP --> ES
+    NEIGHBORS --> ES
+    COMMON --> ES
+    PERIOD --> ES
+
+    RESULT --> USER
+
+    %% Styles
+    classDef userStyle fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    classDef mainStyle fill:#FFF3E0,stroke:#EF6C00,stroke-width:2px
+    classDef orchStyle fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    classDef agentStyle fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
+    classDef toolStyle fill:#FFEBEE,stroke:#C62828,stroke-width:2px
+    classDef extStyle fill:#E0F7FA,stroke:#00838F,stroke-width:2px
+
+    class USER userStyle
+    class MAIN mainStyle
+    class ORCHESTRATOR orchStyle
+    class AGENTS agentStyle
+    class TOOLS toolStyle
+    class EXTERNAL extStyle
+```
+
+------------------------------------------------------------------------------
+2.2 DIAGRAMME SEQUENCE - EXEMPLE D'EXECUTION
+------------------------------------------------------------------------------
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as Utilisateur
+    participant M as main.py
+    participant O as Orchestrator
+    participant P as Planner
+    participant E as Executor
+    participant T as Tools
+    participant ES as Elasticsearch
+    participant S as Summarizer
+
+    U->>M: "Qui a investi dans Airbnb?"
+    M->>O: run(query)
+
+    Note over O: Initialisation GraphState
+
+    O->>P: create_plan(query)
+    P->>P: LLM genere le plan
+    P-->>O: Plan: 1.lookup 2.get_neighbors
+
+    loop Boucle d'exploration (max 15 iterations)
+        O->>E: execute(plan, state)
+        E->>E: LLM decide tool_call
+        E->>T: lookup_entity("company", "Airbnb")
+        T->>ES: POST /company/_search
+        ES-->>T: {id: "company/airbnb", ...}
+        T-->>E: Resultat lookup
+
+        E->>E: LLM analyse, decide prochain outil
+        E->>T: get_neighbors("company", "company/airbnb")
+        T->>ES: POST /investment/_search
+        ES-->>T: {investors: [...], investments: [...]}
+        T-->>E: Resultat neighbors
+
+        E->>E: LLM: "EXPLORATION_COMPLETE"
+    end
+
+    O->>S: summarize(query, plan, results)
+    S->>S: LLM structure le resume
+    S-->>O: Resume formate
+
+    O-->>M: Resume final
+    M-->>U: Affichage resultat
+```
+
+------------------------------------------------------------------------------
+2.3 DIAGRAMME ETATS - MACHINE A ETATS LANGGRAPH
+------------------------------------------------------------------------------
+
+```mermaid
+stateDiagram-v2
+    [*] --> Planner: Nouvelle requete
+
+    Planner --> Executor: Plan cree
+
+    Executor --> ToolNode: tool_calls detectes
+    ToolNode --> Executor: Resultats outils
+
+    Executor --> Prioritizer: Besoin de priorisation
+    Prioritizer --> Executor: Prochains noeuds
+
+    Executor --> Summarizer: EXPLORATION_COMPLETE
+    Executor --> Summarizer: MAX_ITERATIONS atteint
+    Executor --> Summarizer: context_exceeded
+
+    Summarizer --> [*]: Resume final
+
+    note right of Executor
+        Boucle principale:
+        - Appelle outils
+        - Analyse resultats
+        - Decide suite
+    end note
+
+    note right of Prioritizer
+        Optionnel:
+        Optimise exploration
+        si necessaire
+    end note
+```
+
+------------------------------------------------------------------------------
+2.4 DIAGRAMME COMPOSANTS - ARCHITECTURE TECHNIQUE
+------------------------------------------------------------------------------
+
+```mermaid
+C4Component
+    title Composants du Systeme SIREN Investigation Agent
+
+    Container_Boundary(app, "Application Python") {
+        Component(cli, "main.py", "Python", "Interface CLI")
+        Component(orch, "GraphOrchestrator", "LangGraph", "Coordination agents")
+        Component(planner, "PlannerAgent", "LangChain", "Generation de plans")
+        Component(prio, "PrioritizerAgent", "LangChain", "Priorisation")
+        Component(summ, "SummarizerAgent", "LangChain", "Resume final")
+        Component(tools, "ElasticsearchTools", "Python/requests", "Acces donnees")
+    }
+
+    Container_Ext(openai, "OpenAI API", "GPT-4o-mini")
+    Container_Ext(es, "Elasticsearch", "Graphe SIREN")
+
+    Rel(cli, orch, "Demarre investigation")
+    Rel(orch, planner, "Cree plan")
+    Rel(orch, prio, "Priorise")
+    Rel(orch, summ, "Resume")
+    Rel(orch, tools, "Execute outils")
+
+    Rel(planner, openai, "API calls")
+    Rel(prio, openai, "API calls")
+    Rel(summ, openai, "API calls")
+    Rel(tools, es, "REST API")
+```
+
+------------------------------------------------------------------------------
+2.5 DIAGRAMME MINDMAP - CONCEPTS CLES
+------------------------------------------------------------------------------
+
+```mermaid
+mindmap
+  root((SIREN<br/>Investigation<br/>Agent))
+    Agents
+      Planner
+        Decompose question
+        Cree plan d action
+      Executor
+        Appelle outils
+        Analyse resultats
+      Prioritizer
+        Optimise exploration
+        Evite boucles inutiles
+      Summarizer
+        Formate reponse
+        Structure claire
+    Outils
+      lookup_entity
+        Recherche par nom
+      get_neighbors
+        Voisins du graphe
+      find_common_investors
+        Liens entre companies
+      find_investments_in_period
+        Filtres temporels
+    Technologies
+      LangGraph
+        Machine a etats
+        Boucles conditionnelles
+      LangChain
+        Abstraction LLM
+        Prompt templates
+      OpenAI
+        GPT-4o-mini
+        Tool calling
+      Elasticsearch
+        Stockage graphe
+        Recherche rapide
+    Optimisations
+      Condensation contexte
+        Evite depassement tokens
+        Preserve information
+      MAX_ITERATIONS
+        Securite anti-boucle
+      ESSENTIAL_FIELDS
+        Reduit taille donnees
+```
+
+================================================================================
+                    PARTIE 3 : RESUME EXECUTIF
+================================================================================
+
+ARCHITECTURE EN UNE PHRASE:
+---------------------------
+Un orchestrateur LangGraph coordonne 4 agents LLM specialises (Planner,
+Executor, Prioritizer, Summarizer) qui utilisent des outils deterministes
+pour explorer un graphe Elasticsearch et repondre en langage naturel.
+
+FLUX SIMPLIFIE:
+---------------
+    Question  ->  Plan  ->  [Execute/Analyse/Priorise]*  ->  Resume  ->  Reponse
+                              ^_________|
+                              (boucle)
+
+POINTS FORTS:
+-------------
++ Architecture modulaire et extensible
++ Separation claire des responsabilites
++ Gestion robuste du contexte LLM
++ Outils deterministes (pas d'hallucination sur les donnees)
++ Score de validation: 83/100
+
+LIMITATIONS CONNUES:
+--------------------
+- Requetes d'agregation globale complexes
+- Pas de validation des index dans les prompts
+- Dependance a OpenAI API
+
+================================================================================
+                              FIN DU DOCUMENT
+================================================================================
