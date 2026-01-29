@@ -9,7 +9,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 import openai  # Pour capturer BadRequestError
 
 from agents.planner import PlannerAgent
@@ -48,7 +48,9 @@ class GraphOrchestrator:
     Coordonne le Planificateur, l'Exécuteur (avec outils), le Priorisation et le Summarizer.
     """
 
-    MAX_ITERATIONS = 10  # Limite de sécurité
+    MAX_ITERATIONS = 15  # Limite de sécurité (augmentée pour plus d'exploration)
+    CONDENSE_THRESHOLD = 25  # Seuil pour déclencher la condensation du contexte
+    KEEP_RECENT_MESSAGES = 6  # Messages récents à garder après condensation
 
     def __init__(self, model_name: str = "gpt-4o-mini"):
         self.model_name = model_name
@@ -144,13 +146,177 @@ Commence par la première étape du plan.""")
             "finished": False
         }
 
+    def _condense_context(self, messages: list, query: str) -> list:
+        """
+        Condense le contexte en résumant les découvertes intermédiaires.
+
+        Au lieu de tronquer (perdre l'info), on RÉSUME (préserver l'info condensée).
+        C'est la vraie Option 2 : optimisation intelligente du contexte.
+        """
+        print("   🗜️  Condensation du contexte en cours...")
+
+        # Séparer le message système
+        system_msg = None
+        other_messages = messages
+        if messages and isinstance(messages[0], SystemMessage):
+            system_msg = messages[0]
+            other_messages = messages[1:]
+
+        # Identifier les "unités" complètes (préserver paires tool_calls/tool)
+        units = []
+        i = len(other_messages) - 1
+        while i >= 0:
+            msg = other_messages[i]
+            if isinstance(msg, ToolMessage):
+                unit = [msg]
+                i -= 1
+                while i >= 0 and isinstance(other_messages[i], ToolMessage):
+                    unit.insert(0, other_messages[i])
+                    i -= 1
+                if i >= 0 and isinstance(other_messages[i], AIMessage):
+                    ai_msg = other_messages[i]
+                    if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
+                        unit.insert(0, ai_msg)
+                        i -= 1
+                units.insert(0, unit)
+            else:
+                units.insert(0, [msg])
+                i -= 1
+
+        # Garder les 2-3 dernières unités complètes pour continuité
+        recent_units = units[-3:] if len(units) > 3 else units
+        recent_messages = [msg for unit in recent_units for msg in unit]
+
+        # Messages à résumer = tout sauf les récents
+        units_to_summarize = units[:-3] if len(units) > 3 else []
+        messages_to_summarize = [msg for unit in units_to_summarize for msg in unit]
+
+        if not messages_to_summarize:
+            return messages  # Rien à condenser
+
+        # Extraire le contenu à résumer
+        content_to_summarize = []
+        for msg in messages_to_summarize:
+            if isinstance(msg, AIMessage) and msg.content:
+                content_to_summarize.append(f"[Assistant]: {msg.content[:500]}")
+            elif isinstance(msg, ToolMessage):
+                # Résumer les résultats d'outils (souvent volumineux)
+                content = str(msg.content)[:300]
+                content_to_summarize.append(f"[Outil]: {content}")
+            elif isinstance(msg, HumanMessage):
+                content_to_summarize.append(f"[Contexte]: {msg.content[:200]}")
+
+        # Demander au LLM de résumer
+        summary_prompt = f"""Résume de manière CONCISE les découvertes faites jusqu'ici pour répondre à: "{query}"
+
+Informations à résumer:
+{chr(10).join(content_to_summarize[-15:])}
+
+Instructions:
+- Liste les entités trouvées (companies, investors) avec leurs IDs
+- Liste les faits clés découverts (montants, dates, relations)
+- Sois TRÈS concis (max 300 mots)
+- Format: bullet points"""
+
+        try:
+            summary_response = self.executor_llm.invoke([HumanMessage(content=summary_prompt)])
+            summary_content = summary_response.content
+        except Exception as e:
+            # En cas d'erreur, faire un résumé basique
+            summary_content = "Résumé non disponible - exploration en cours."
+
+        # Créer le message de résumé condensé
+        condensed_message = HumanMessage(content=f"""📋 RÉSUMÉ DES DÉCOUVERTES PRÉCÉDENTES:
+{summary_content}
+
+Continue l'exploration à partir de ces informations.""")
+
+        # Reconstruire la liste de messages
+        result = []
+        if system_msg:
+            result.append(system_msg)
+        result.append(condensed_message)
+        result.extend(recent_messages)
+
+        print(f"   ✅ Contexte condensé: {len(messages)} → {len(result)} messages")
+        return result
+
+    def _truncate_messages_safely(self, messages: list, max_messages: int) -> list:
+        """
+        Tronque les messages en préservant les paires tool_calls/tool_response.
+
+        OpenAI exige que les ToolMessage suivent immédiatement le AIMessage
+        avec tool_calls correspondant. Cette méthode garantit qu'on ne coupe
+        jamais au milieu d'une telle paire.
+        """
+        if len(messages) <= max_messages:
+            return messages
+
+        # Séparer le message système (à toujours garder)
+        system_msg = None
+        other_messages = messages
+        if messages and isinstance(messages[0], SystemMessage):
+            system_msg = messages[0]
+            other_messages = messages[1:]
+            max_messages -= 1  # Réserver une place pour le système
+
+        # Identifier les "unités" de messages (groupes tool_calls + réponses)
+        # On parcourt de la fin vers le début pour garder les plus récents
+        units = []
+        i = len(other_messages) - 1
+
+        while i >= 0:
+            msg = other_messages[i]
+
+            if isinstance(msg, ToolMessage):
+                # C'est une réponse d'outil - trouver le AIMessage avec tool_calls
+                unit = [msg]
+                i -= 1
+
+                # Collecter toutes les ToolMessage consécutives
+                while i >= 0 and isinstance(other_messages[i], ToolMessage):
+                    unit.insert(0, other_messages[i])
+                    i -= 1
+
+                # Le message précédent doit être le AIMessage avec tool_calls
+                if i >= 0 and isinstance(other_messages[i], AIMessage):
+                    ai_msg = other_messages[i]
+                    if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
+                        unit.insert(0, ai_msg)
+                        i -= 1
+
+                units.insert(0, unit)
+            else:
+                # Message standalone (HumanMessage, AIMessage sans tool_calls)
+                units.insert(0, [msg])
+                i -= 1
+
+        # Sélectionner les unités les plus récentes qui tiennent dans la limite
+        selected_messages = []
+        for unit in reversed(units):
+            if len(selected_messages) + len(unit) <= max_messages:
+                selected_messages = unit + selected_messages
+            else:
+                break
+
+        # Reconstruire la liste avec le message système
+        if system_msg:
+            return [system_msg] + selected_messages
+        return selected_messages
+
     def _executor_node(self, state: GraphState) -> dict:
         """Noeud Exécuteur - Exécute le plan en utilisant les outils."""
         print(f"\n🔧 [Exécuteur] Itération {state['iteration'] + 1}...")
 
+        # OPTION 2 (vraie): Condensation intelligente du contexte
+        # Au lieu de tronquer (perdre info), on RÉSUME (préserver info condensée)
+        messages = state["messages"]
+        if len(messages) > self.CONDENSE_THRESHOLD:
+            messages = self._condense_context(messages, state["query"])
+
         try:
-            # Appeler le LLM avec les outils
-            response = self.executor_llm_with_tools.invoke(state["messages"])
+            # Appeler le LLM avec les outils (messages optimisés)
+            response = self.executor_llm_with_tools.invoke(messages)
 
             return {
                 "messages": [response],
@@ -257,16 +423,87 @@ Continue l'exploration ou dis "EXPLORATION_COMPLETE" si tu as assez d'informatio
 
     def _extract_results_summary(self, messages: list) -> str:
         """Extrait un résumé des résultats à partir des messages."""
+        import json
         results = []
+
         for msg in messages:
             if hasattr(msg, "content") and msg.content:
-                # Filtrer les messages système
-                if isinstance(msg, (AIMessage, HumanMessage)):
-                    content = str(msg.content)
-                    if len(content) > 50:  # Ignorer les messages très courts
-                        results.append(content[:500])  # Limiter la taille
+                content = str(msg.content)
 
-        return "\n---\n".join(results[-10:])  # Garder les 10 derniers
+                # Inclure les ToolMessages (contiennent les vraies données!)
+                if isinstance(msg, ToolMessage):
+                    # Essayer de parser le JSON pour extraire intelligemment
+                    try:
+                        data = json.loads(content) if content.startswith('{') or content.startswith('[') else None
+                        if data:
+                            summary = self._summarize_tool_data(data)
+                            results.append(f"[Outil]: {summary}")
+                        else:
+                            results.append(f"[Outil]: {content[:1500]}")
+                    except json.JSONDecodeError:
+                        results.append(f"[Outil]: {content[:1500]}")
+
+                # Messages de l'assistant (analyses, conclusions)
+                elif isinstance(msg, AIMessage):
+                    if len(content) > 50:
+                        results.append(f"[Assistant]: {content[:1000]}")
+
+                # Messages humains/contexte
+                elif isinstance(msg, HumanMessage):
+                    if len(content) > 50 and "RÉSUMÉ DES DÉCOUVERTES" not in content:
+                        results.append(f"[Contexte]: {content[:500]}")
+
+        # Garder plus de messages pour avoir un meilleur contexte
+        return "\n---\n".join(results[-20:])
+
+    def _summarize_tool_data(self, data: dict | list) -> str:
+        """Résume intelligemment les données d'un outil."""
+        if isinstance(data, list):
+            # Liste d'entités - extraire les labels
+            labels = [item.get('label', item.get('id', '?')) for item in data[:50]]
+            if len(data) > 50:
+                return f"{len(data)} résultats: {', '.join(labels[:20])}... (et {len(data)-20} autres)"
+            return f"{len(data)} résultats: {', '.join(labels)}"
+
+        if isinstance(data, dict):
+            parts = []
+
+            # Cas lookup_entity: {total, items}
+            if 'items' in data and 'total' in data:
+                items = data['items']
+                labels = [item.get('label', '?') for item in items]
+                parts.append(f"Trouvé {data['total']} entités: {', '.join(labels)}")
+
+            # Cas get_neighbors: {investments, investors} ou {investments, companies}
+            if 'companies' in data:
+                companies = data['companies']
+                labels = [c.get('label', '?') for c in companies]
+                parts.append(f"{len(companies)} companies: {', '.join(labels)}")
+
+            if 'investors' in data:
+                investors = data['investors']
+                labels = [i.get('label', '?') for i in investors]
+                parts.append(f"{len(investors)} investors: {', '.join(labels)}")
+
+            if 'investments' in data:
+                investments = data['investments']
+                # Extraire infos clés des investissements
+                inv_summaries = []
+                for inv in investments[:10]:
+                    amount = inv.get('raised_amount', 0)
+                    year = inv.get('funded_year', '?')
+                    currency = inv.get('raised_currency_code', '')
+                    inv_summaries.append(f"{year}: {amount:,.0f} {currency}" if amount else f"{year}")
+                parts.append(f"{len(investments)} investments: {', '.join(inv_summaries)}")
+                if len(investments) > 10:
+                    parts[-1] += f"... (et {len(investments)-10} autres)"
+
+            if parts:
+                return " | ".join(parts)
+
+        # Fallback: représentation JSON tronquée
+        import json
+        return json.dumps(data, ensure_ascii=False)[:1500]
 
     def run(self, query: str) -> str:
         """

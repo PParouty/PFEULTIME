@@ -170,6 +170,175 @@ COMPORTEMENT :
 [... résumé ...]
 ```
 
+10. PREMIÈRE TENTATIVE : LIMITATION ARBITRAIRE (fausse Option 2)
+-----------------------------------------------------------------
+Date : 28 Janvier 2026
+
+MODIFICATIONS INITIALES :
+- MAX_ITEMS = 20 dans elasticsearch_tools.py
+- MAX_MESSAGES = 20 dans orchestrator.py
+- _truncate_messages_safely() pour préserver paires tool_calls/tool
+
+PROBLÈME :
+Ces modifications étaient des LIMITATIONS ARBITRAIRES, pas une vraie optimisation.
+On perdait potentiellement des données utiles.
+
+
+11. VRAIE OPTION 2 : CONDENSATION INTELLIGENTE DU CONTEXTE
+----------------------------------------------------------
+Date : 29 Janvier 2026
+
+OBJECTIF :
+Optimiser le contexte en RÉSUMANT les découvertes (préserver l'info)
+au lieu de TRONQUER (perdre l'info).
+
+MODIFICATIONS FINALES :
+
+A) Dans elasticsearch_tools.py :
+   - ESSENTIAL_FIELDS : garde seulement les champs utiles (vraie optimisation)
+   - MAX_ITEMS = 50 (augmenté pour ne pas perdre d'info)
+
+B) Dans orchestrator.py :
+   - MAX_ITERATIONS = 15 (augmenté pour plus d'exploration)
+   - CONDENSE_THRESHOLD = 25 (seuil pour déclencher condensation)
+   - KEEP_RECENT_MESSAGES = 6 (messages récents après condensation)
+
+   Nouvelle méthode _condense_context() qui :
+   1. Préserve les paires tool_calls/tool (identifie les "unités")
+   2. Demande au LLM de RÉSUMER les découvertes anciennes
+   3. Remplace les vieux messages par : [SystemMsg, Résumé, Messages récents]
+   4. Conserve l'information clé tout en réduisant les tokens
+
+DIFFÉRENCE CLÉ :
+   - Fausse Option 2 : troncature → perte d'information
+   - Vraie Option 2 : condensation → préservation de l'information résumée
+
+RÉSULTATS DES TESTS :
+
+Test 1 : "Quels investisseurs ont investi dans Twitter entre 2008 et 2012?"
+   - 5 itérations (condensation non déclenchée)
+   - Résultats : Tim Ferriss, Union Square Ventures, T. Rowe Price
+
+Test 2 : "Trouve tous les liens entre Airbnb, Twitter et Facebook"
+   - 7 itérations (condensation non déclenchée)
+   - Plan en 10 étapes exécuté avec succès
+   - Investisseurs listés pour chaque entreprise
+
+La condensation se déclenchera automatiquement si une exploration
+dépasse 25 messages, préservant les découvertes clés.
+
+12. BATTERIE DE TESTS ET CORRECTIONS MAJEURES
+----------------------------------------------
+Date : 29 Janvier 2026
+
+PROBLÈMES IDENTIFIÉS PAR LES TESTS :
+
+A) Le LLM utilisait mal get_neighbors :
+   - Plan généré: entity_type="investment" au lieu de "investor"
+   - Cause: Documentation de l'outil pas assez claire
+
+B) Les ToolMessages étaient ignorés par le summarizer :
+   - _extract_results_summary ne traitait que AIMessage et HumanMessage
+   - Les données des outils (ToolMessage) étaient perdues !
+
+C) Troncature trop agressive :
+   - content[:500] perdait la plupart des données
+   - 38 entreprises réduites à 2 dans le résumé final
+
+CORRECTIONS APPORTÉES :
+
+1. elasticsearch_tools.py - Docstring get_neighbors améliorée :
+   - Tableau clair montrant quel entity_type utiliser
+   - Exemples CORRECT et FAUX explicites
+   - Format visuel plus lisible
+
+2. agents/planner.py - Prompt enrichi :
+   - Tableau explicatif pour get_neighbors
+   - Instructions sur la correspondance entity_type/entity_id
+
+3. orchestrator.py - _extract_results_summary réécrit :
+   - Inclut maintenant les ToolMessage
+   - Nouvelle méthode _summarize_tool_data() pour extraction intelligente
+   - Parse le JSON et extrait: labels, counts, montants
+   - Gère les gros résultats sans tout tronquer
+
+RÉSULTATS DES TESTS DE VALIDATION :
+
+| Test                              | Avant     | Après      |
+|-----------------------------------|-----------|------------|
+| Kleiner Perkins → companies       | 2/38      | 38/38 ✅   |
+| Investisseurs de Twitter          | partiel   | 6/6 ✅     |
+| Investissements Jeff Bezos        | non testé | 4/4 ✅     |
+| Investisseurs communs Google/Amazon| OK       | 0 (correct)✅|
+
+13. AMÉLIORATION: FILTRAGE PAR ENTITÉ DANS find_investments_in_period
+----------------------------------------------------------------------
+Date : 29 Janvier 2026
+
+PROBLÈME IDENTIFIÉ :
+La requête "Combien d'investissements Facebook a reçu entre 2010 et 2020?"
+retournait TOUS les investissements de la période (50), pas ceux de Facebook.
+
+CAUSE :
+`find_investments_in_period` n'avait pas de paramètre pour filtrer par company
+ou investor.
+
+SOLUTION :
+Ajout de deux nouveaux paramètres à `find_investments_in_period`:
+- `company_id`: pour filtrer les investissements REÇUS par une company
+- `investor_id`: pour filtrer les investissements FAITS par un investor
+
+MODIFICATIONS :
+1. elasticsearch_tools.py:
+   - Méthode find_investments_in_period: ajout company_id et investor_id
+   - Requête ES: ajout de filtres "terms" sur companies[] et investors[]
+   - Docstring @tool enrichie avec tableau d'exemples
+
+2. agents/planner.py:
+   - Prompt mis à jour avec exemples d'utilisation des nouveaux paramètres
+
+TEST DE VALIDATION :
+- Requête: "Investissements reçus par Facebook 2010-2020"
+- Avant: 50 investissements (TOUS), max 165M USD (FAUX)
+- Après: 2 investissements, max 1.5 milliard USD (CORRECT ✅)
+
+14. BATTERIE DE TESTS COMPLÈTE
+------------------------------
+Date : 29 Janvier 2026
+
+OBJECTIF :
+Valider le système multi-agents avec une batterie de 15 tests couvrant
+tous les cas d'usage principaux et quelques pièges.
+
+CATÉGORIES DE TESTS :
+1. Recherche d'entités (2 tests)
+2. Liste d'investisseurs (2 tests)
+3. Investissements par investisseur (2 tests)
+4. Liens entre entités (2 tests)
+5. Filtres temporels (2 tests)
+6. Requêtes complexes (2 tests)
+7. Pièges connaissances générales (3 tests)
+
+RÉSULTATS :
+- OK:      12/15 (80%)
+- PARTIEL:  1/15 (7%)  - Test 6.2: timeout sur agrégation globale
+- ECHEC:    1/15 (7%)  - Test 7.1: index "person" inexistant
+
+NOTE GLOBALE : 83/100
+
+POINTS FORTS VALIDÉS :
++ Recherche d'entités fiable
++ Navigation graphe (get_neighbors, find_common_investors)
++ Filtres temporels avec company_id/investor_id
++ Ne fabrique pas de données fictives
++ Indique clairement les absences de données
+
+LIMITATIONS IDENTIFIÉES :
+- Pas de validation des index dans le prompt (person n'existe pas)
+- Requêtes d'agrégation globale non supportées
+
+FICHIER DE TESTS : TESTS_VALIDATION.txt
+
 ================================================================================
                               FIN DE L'HISTORIQUE
 ================================================================================
