@@ -24,10 +24,10 @@ def check_configuration():
         errors.append("OPENAI_API_KEY non définie. Créez un fichier .env avec votre clé.")
 
     if not os.getenv("ES_URL"):
-        print("⚠️  ES_URL non définie, utilisation de https://localhost:9220 par défaut")
+        print("ES_URL non définie, utilisation de https://localhost:9220 par défaut")
 
     if errors:
-        print("\n❌ Erreurs de configuration:")
+        print("\nErreurs de configuration:")
         for error in errors:
             print(f"   - {error}")
         print("\nConsultez .env.example pour voir les variables requises.")
@@ -51,7 +51,7 @@ def interactive_mode(orchestrator):
 
     while True:
         try:
-            query = input("\n🔍 Votre question: ").strip()
+            query = input("\nVotre question: ").strip()
 
             if not query:
                 continue
@@ -68,7 +68,7 @@ def interactive_mode(orchestrator):
             result = orchestrator.run(query)
 
             print("\n" + "="*60)
-            print("📋 RÉSULTAT")
+            print("RÉSULTAT")
             print("="*60)
             print(result)
 
@@ -76,7 +76,7 @@ def interactive_mode(orchestrator):
             print("\n\nInterruption. Au revoir!")
             break
         except Exception as e:
-            print(f"\n❌ Erreur: {e}")
+            print(f"\nErreur: {e}")
             print("Réessayez ou tapez 'quit' pour quitter.")
 
 
@@ -85,7 +85,7 @@ def single_query_mode(orchestrator, query: str):
     result = orchestrator.run(query)
 
     print("\n" + "="*60)
-    print("📋 RÉSULTAT")
+    print("RÉSULTAT")
     print("="*60)
     print(result)
 
@@ -93,7 +93,7 @@ def single_query_mode(orchestrator, query: str):
 def print_help():
     """Affiche l'aide."""
     help_text = """
-📖 AIDE - SIREN Investigation Agent
+AIDE - SIREN Investigation Agent
 
 Exemples de questions que vous pouvez poser:
 ─────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ def main():
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     orchestrator = GraphOrchestrator(model_name=model)
 
-    print(f"✅ Système initialisé (modèle: {model})")
+    print(f"Système initialisé (modèle: {model})")
 
     # Déterminer le mode
     if len(sys.argv) > 1:
