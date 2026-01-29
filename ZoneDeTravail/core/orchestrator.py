@@ -117,7 +117,7 @@ class GraphOrchestrator:
 
     def _plan_node(self, state: GraphState) -> dict:
         """Noeud Planificateur - Crée le plan d'action."""
-        print("\n📋 [Planificateur] Création du plan d'action...")
+        print("\n[Planificateur] Création du plan d'action...")
 
         plan = self.planner.create_plan(state["query"])
         print(f"Plan créé:\n{plan}\n")
@@ -226,7 +226,7 @@ Instructions:
             summary_content = "Résumé non disponible - exploration en cours."
 
         # Créer le message de résumé condensé
-        condensed_message = HumanMessage(content=f"""📋 RÉSUMÉ DES DÉCOUVERTES PRÉCÉDENTES:
+        condensed_message = HumanMessage(content=f"""RÉSUMÉ DES DÉCOUVERTES PRÉCÉDENTES:
 {summary_content}
 
 Continue l'exploration à partir de ces informations.""")
@@ -238,7 +238,7 @@ Continue l'exploration à partir de ces informations.""")
         result.append(condensed_message)
         result.extend(recent_messages)
 
-        print(f"   ✅ Contexte condensé: {len(messages)} → {len(result)} messages")
+        print(f"   Contexte condensé: {len(messages)} → {len(result)} messages")
         return result
 
     def _truncate_messages_safely(self, messages: list, max_messages: int) -> list:
@@ -306,7 +306,7 @@ Continue l'exploration à partir de ces informations.""")
 
     def _executor_node(self, state: GraphState) -> dict:
         """Noeud Exécuteur - Exécute le plan en utilisant les outils."""
-        print(f"\n🔧 [Exécuteur] Itération {state['iteration'] + 1}...")
+        print(f"\n[Exécuteur] Itération {state['iteration'] + 1}...")
 
         # OPTION 2 (vraie): Condensation intelligente du contexte
         # Au lieu de tronquer (perdre info), on RÉSUME (préserver info condensée)
@@ -326,7 +326,7 @@ Continue l'exploration à partir de ces informations.""")
         except openai.BadRequestError as e:
             # Gérer le dépassement de contexte
             if "context_length_exceeded" in str(e):
-                print("\n⚠️  [Exécuteur] Contexte trop grand - passage au résumé avec les résultats partiels...")
+                print("\n[Exécuteur] Contexte trop grand - passage au résumé avec les résultats partiels...")
 
                 # Créer un message qui forcera le passage au summarizer
                 error_message = AIMessage(content="""EXPLORATION_COMPLETE
@@ -368,7 +368,7 @@ Les résultats ci-dessous sont partiels mais contiennent les informations trouv�
 
     def _prioritizer_node(self, state: GraphState) -> dict:
         """Noeud Priorisation - Décide des prochains noeuds à explorer."""
-        print("\n🎯 [Priorisation] Analyse des prochaines étapes...")
+        print("\n[Priorisation] Analyse des prochaines étapes...")
 
         # Extraire les résultats actuels des messages
         results_summary = self._extract_results_summary(state["messages"])
@@ -400,14 +400,14 @@ Continue l'exploration ou dis "EXPLORATION_COMPLETE" si tu as assez d'informatio
 
     def _summarizer_node(self, state: GraphState) -> dict:
         """Noeud Summarizer - Produit le résumé final."""
-        print("\n📝 [Summarizer] Production du résumé final...")
+        print("\n[Summarizer] Production du résumé final...")
 
         # Extraire tous les résultats des messages
         raw_results = self._extract_results_summary(state["messages"])
 
         # Ajouter une note si le contexte a été dépassé
         if state.get("context_exceeded", False):
-            raw_results += "\n\n⚠️ NOTE: L'exploration a été interrompue (contexte trop volumineux). Ces résultats sont partiels."
+            raw_results += "\n\nNOTE: L'exploration a été interrompue (contexte trop volumineux). Ces résultats sont partiels."
 
         summary = self.summarizer.summarize(
             original_query=state["query"],
@@ -417,7 +417,7 @@ Continue l'exploration ou dis "EXPLORATION_COMPLETE" si tu as assez d'informatio
 
         # Ajouter un avertissement en début de résumé si nécessaire
         if state.get("context_exceeded", False):
-            summary = "⚠️ **Résultats partiels** (exploration interrompue)\n\n" + summary
+            summary = "**Résultats partiels** (exploration interrompue)\n\n" + summary
 
         return {"summary": summary, "finished": True}
 
@@ -516,7 +516,7 @@ Continue l'exploration ou dis "EXPLORATION_COMPLETE" si tu as assez d'informatio
             Le résumé des résultats
         """
         print(f"\n{'='*60}")
-        print(f"🔍 Nouvelle investigation: {query}")
+        print(f"Nouvelle investigation: {query}")
         print(f"{'='*60}")
 
         # État initial
