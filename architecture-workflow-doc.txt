@@ -64,16 +64,6 @@ specialises qui collaborent, coordonnes par un "orchestrateur".
 |                  | -> Communication directe avec ES via REST API            |
 +------------------+----------------------------------------------------------+
 
-POURQUOI LANGGRAPH PLUTOT QUE LANGCHAIN SEUL ?
-
-LangChain permet de creer des "chains" (sequences lineaires):
-    Input -> LLM -> Output
-
-Mais notre cas d'usage necessite des BOUCLES:
-    Plan -> Execute -> Analyse -> Besoin de plus? -> Re-execute...
-
-LangGraph ajoute cette capacite en definissant un GRAPHE d'etats
-avec des transitions conditionnelles (comme une machine a etats finis).
 
 ------------------------------------------------------------------------------
 1.3 STRUCTURE DES FICHIERS
@@ -120,7 +110,7 @@ ZoneDeTravailDeClaude/
                                  # -> find_investments_in_period: filtres
 
 ------------------------------------------------------------------------------
-1.4 LES AGENTS EN DETAIL
+1.4 LES AGENTS
 ------------------------------------------------------------------------------
 
 AGENT 1: PLANIFICATEUR (planner.py)
@@ -250,7 +240,7 @@ Chaque noeud peut LIRE et MODIFIER cet etat.
 C'est ce qui permet la coordination entre agents.
 
 ------------------------------------------------------------------------------
-1.7 GESTION DU CONTEXTE (Optimisation Importante)
+1.7 GESTION DU CONTEXTE (Optimisation du contexte)
 ------------------------------------------------------------------------------
 
 PROBLEME: Le LLM a une limite de contexte (128K tokens pour GPT-4o-mini)
@@ -270,13 +260,13 @@ Resultat: On preserve les informations cles tout en reduisant les tokens
 
 
 ================================================================================
-                    PARTIE 2 : DIAGRAMME MERMAID
+                    PARTIE 2 : WORKFLOW ET AUTRES DIAGRAMMES
 ================================================================================
 
 Copiez le code ci-dessous dans https://mermaid.live pour visualiser le workflow.
 
 ------------------------------------------------------------------------------
-2.1 DIAGRAMME PRINCIPAL - FLUX COMPLET
+2.1 WORKFLOW COMPLET
 ------------------------------------------------------------------------------
 
 ```mermaid
@@ -547,37 +537,3 @@ mindmap
       ESSENTIAL_FIELDS
         Reduit taille donnees
 ```
-
-================================================================================
-                    PARTIE 3 : RESUME EXECUTIF
-================================================================================
-
-ARCHITECTURE EN UNE PHRASE:
----------------------------
-Un orchestrateur LangGraph coordonne 4 agents LLM specialises (Planner,
-Executor, Prioritizer, Summarizer) qui utilisent des outils deterministes
-pour explorer un graphe Elasticsearch et repondre en langage naturel.
-
-FLUX SIMPLIFIE:
----------------
-    Question  ->  Plan  ->  [Execute/Analyse/Priorise]*  ->  Resume  ->  Reponse
-                              ^_________|
-                              (boucle)
-
-POINTS FORTS:
--------------
-+ Architecture modulaire et extensible
-+ Separation claire des responsabilites
-+ Gestion robuste du contexte LLM
-+ Outils deterministes (pas d'hallucination sur les donnees)
-+ Score de validation: 83/100
-
-LIMITATIONS CONNUES:
---------------------
-- Requetes d'agregation globale complexes
-- Pas de validation des index dans les prompts
-- Dependance a OpenAI API
-
-================================================================================
-                              FIN DU DOCUMENT
-================================================================================

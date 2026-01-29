@@ -1,39 +1,7 @@
 ================================================================================
                     SIREN INVESTIGATION AGENT
-                    WORKFLOW V2 - DIAGRAMME SIMPLIFIE
+                            WORKFLOW V2
 ================================================================================
-
-================================================================================
-                    CLARIFICATION : LE ROLE D'OPENAI API
-================================================================================
-
-CONFUSION FREQUENTE:
---------------------
-"OpenAI est en bas du schema, est-ce la fin du processus ?"
-
-NON ! OpenAI n'est pas une ETAPE du workflow, c'est un SERVICE EXTERNE
-que les agents CONSULTENT a chaque fois qu'ils ont besoin de "reflechir".
-
-ANALOGIE:
----------
-Imaginez une entreprise avec 4 employes (les agents) qui ont chacun
-un telephone pour appeler un expert externe (OpenAI) :
-
-    +------------------+
-    |    ENTREPRISE    |
-    |                  |
-    |  [Planner]  -----|----- telephone ----> [Expert OpenAI]
-    |  [Executor] -----|----- telephone ----> [Expert OpenAI]
-    |  [Prioritizer] --|----- telephone ----> [Expert OpenAI]
-    |  [Summarizer] ---|----- telephone ----> [Expert OpenAI]
-    |                  |
-    +------------------+
-
-Chaque agent appelle LE MEME expert (GPT-4o-mini) mais avec des
-INSTRUCTIONS DIFFERENTES (prompts systeme).
-
-QUI FAIT QUOI ?
----------------
 
 ARCHITECTURE: 3 AGENTS + 1 EXECUTEUR
 
@@ -54,18 +22,13 @@ ARCHITECTURE: 3 AGENTS + 1 EXECUTEUR
 |             |                      | lisible pour l'humain     |             |
 +-------------+----------------------+---------------------------+-------------+
 
-DIFFERENCE CLE:
-- Les 3 AGENTS (Planner, Prioritizer, Summarizer) = reflechissent seulement
-- L'EXECUTEUR = agit sur les donnees (appelle les outils Elasticsearch)
-
-TOUS consultent OpenAI pour "reflechir", mais seul l'Executor peut AGIR.
 
 
 ================================================================================
                     DIAGRAMME PRINCIPAL - FLUX COMPLET V2
 ================================================================================
 
-Copiez ce code dans https://mermaid.live
+Pour visualiser ce diagramme, utiliser : https://mermaid.live
 
 ```mermaid
 flowchart TB
@@ -136,12 +99,11 @@ flowchart TB
     class RESULT resultStyle
 ```
 
-================================================================================
-                    LEGENDE DU DIAGRAMME
-================================================================================
 
-NUMEROS SUR LES FLECHES (ordre d'execution):
---------------------------------------------
+LEGENDE DU DIAGRAMME :
+
+
+NUMEROS SUR LES FLECHES :
 1. Utilisateur pose sa question via CLI
 2. main.py initialise l'orchestrateur et le GraphState
 3. Le Planner recoit la question
@@ -154,23 +116,22 @@ NUMEROS SUR LES FLECHES (ordre d'execution):
 9. L'utilisateur recoit sa reponse
 
 TYPES DE FLECHES:
------------------
-==>  Fleche epaisse : flux principal (entree/sortie utilisateur)
--->  Fleche normale : flux interne obligatoire
--.-> Fleche pointillee : flux optionnel/conditionnel
-<--> Fleche double : appel + reponse (communication bidirectionnelle)
+Fleche epaisse : flux principal (entree/sortie utilisateur)
+Fleche normale : flux interne obligatoire
+Fleche pointillee : flux optionnel/conditionnel
+Fleche double : appel + reponse (communication bidirectionnelle)
 
 FORMES:
--------
-([ ]) Rectangle arrondi : points d'entree/sortie (utilisateur, resultat)
-[  ]  Rectangle : composants internes
-[[ ]] Rectangle double : service externe (OpenAI)
-(  )  Cylindre : stockage de donnees (Elasticsearch, State)
+Rectangle arrondi : points d'entree/sortie (utilisateur, resultat)
+Rectangle : composants internes
+Rectangle double : service externe (OpenAI)
+Cylindre : stockage de donnees (Elasticsearch, State)
 
 
-================================================================================
-                    VERSION ULTRA-SIMPLIFIEE (pour explication orale)
-================================================================================
+
+
+VERSION SIMPLIFIEE (soutenance) :
+
 
 ```mermaid
 flowchart LR
@@ -198,16 +159,9 @@ flowchart LR
     style DB fill:#E3F2FD,stroke:#1565C0
 ```
 
-EXPLICATION EN UNE PHRASE:
---------------------------
-"La question passe par le Planner qui cree un plan, l'Executor execute
-ce plan en appelant des Tools qui interrogent Elasticsearch, puis le
-Summarizer produit la reponse - et a chaque etape, les agents consultent
-OpenAI pour 'reflechir'."
-
 
 ================================================================================
-                    SCHEMA TEXTUEL (si Mermaid ne marche pas)
+                    SCHEMA TEXTUEL 
 ================================================================================
 
                             UTILISATEUR
@@ -242,6 +196,3 @@ OpenAI pour 'reflechir'."
                         +---------------+
 
 
-================================================================================
-                              FIN DU DOCUMENT
-================================================================================
