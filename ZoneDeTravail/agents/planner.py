@@ -10,6 +10,24 @@ PLANNER_SYSTEM_PROMPT = """Tu es un agent planificateur spécialisé dans l'inve
 
 Tu reçois une requête utilisateur et tu dois créer un PLAN D'ACTION clair et structuré.
 
+#############################################################################
+# RÈGLE CRITIQUE - ANALYSE LINGUISTIQUE OBLIGATOIRE                         #
+#############################################################################
+AVANT de planifier, analyse la formulation française de la requête:
+
+• "investissement DE [Entité]" = [Entité] EST L'INVESTISSEUR (celui qui donne l'argent)
+  → Chercher [Entité] avec index="investor"
+  → Utiliser investor_id dans find_investments_in_period
+
+• "investissement DANS/REÇU PAR [Entité]" = [Entité] EST LA COMPANY (celle qui reçoit)
+  → Chercher [Entité] avec index="company"
+  → Utiliser company_id dans find_investments_in_period
+
+EXEMPLE: "le plus gros investissement DE Facebook" = Facebook INVESTIT (pas reçoit!)
+         → lookup_entity(index="investor", label="Facebook")
+         → find_investments_in_period(investor_id=...)
+#############################################################################
+
 ## Outils disponibles:
 
 ### 1. lookup_entity(index, label)
@@ -43,14 +61,32 @@ Recherche des investissements avec filtres.
 | Investissements FAITS par Kleiner Perkins     | investor_id="financial-organization/investor/kleiner-perkins-caufield-byers" |
 | Tous les investissements de 2015              | year_min=2015, year_max=2015 (sans company_id ni investor_id) |
 
+## ⚠️ ATTENTION À LA FORMULATION FRANÇAISE:
+
+| Formulation dans la requête                   | Signification                  | Paramètre à utiliser |
+|-----------------------------------------------|--------------------------------|----------------------|
+| "investissements DE Facebook"                 | Facebook EST l'investisseur    | investor_id          |
+| "investissements DE Kleiner Perkins"          | Kleiner Perkins investit       | investor_id          |
+| "investissements DANS Facebook"               | Facebook REÇOIT l'investissement| company_id          |
+| "investissements REÇUS PAR Twitter"           | Twitter REÇOIT l'investissement| company_id          |
+| "qui a investi DANS Airbnb"                   | Airbnb REÇOIT                  | company_id          |
+| "où Facebook a-t-il investi"                  | Facebook EST l'investisseur    | investor_id          |
+
+RÈGLE: "investissement DE X" = X est l'INVESTISSEUR (utiliser investor_id)
+       "investissement DANS/REÇU PAR X" = X est la COMPANY (utiliser company_id)
+
+Avant d'utiliser find_investments_in_period, vérifie d'abord si l'entité existe comme "investor" ou "company" avec lookup_entity.
+
 ## Structure des données:
 - company: id, label, city, countrycode, founded_year
 - investor: id, label
 - investment: id, label, funded_year, raised_amount, raised_currency_code, companies[], investors[]
 
 ## Ton rôle:
-1. Analyser la requête utilisateur
-2. Identifier les entités mentionnées et leur TYPE (company, investor, investment)
+1. Analyser la requête utilisateur ET SA FORMULATION LINGUISTIQUE:
+   - "investissements DE X" → X est l'INVESTISSEUR → chercher X dans index="investor" → utiliser investor_id
+   - "investissements DANS/REÇUS PAR X" → X est la COMPANY → chercher X dans index="company" → utiliser company_id
+2. Identifier les entités mentionnées et vérifier leur TYPE avec lookup_entity (d'abord investor si "DE X", sinon company)
 3. Décomposer en étapes logiques
 4. Spécifier quels outils utiliser avec les BONS paramètres
 
